@@ -4,11 +4,19 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using StbImageSharp;
+using System.Runtime.InteropServices.Marshalling;
 
 
 internal class Game: GameWindow
 {
-    int width, height;
+    private int width, height;
+    private int VAO, VBO, EBO, textureVBO, textureID;
+    private Shader shaderProgram;
+    private uint[] indices;
+    private float[] vertices;
+    private float[] texCoords;
+
     public Game(int width, int height) : base
     (GameWindowSettings.Default, NativeWindowSettings.Default)
     {
@@ -17,30 +25,46 @@ internal class Game: GameWindow
         this.width = width;
     }
 
-    float[] vertices =
-    {
-        -0.5f,  0.5f,   0f,
-        0.5f,   0.5f,   0f,
-        0.5f,   -0.5f,  0f,
-        -0.5f,  -0.5f,  0f
-    };
-        uint[] indices =
-        {
-        0, 1, 2,
-        2, 3, 0
-    };
-    int EBO;
-    int VAO;
-    int VBO;
-    Shader shaderProgram;
-
     protected override void OnLoad()
     {
+        base.OnLoad();
+        vertices = new float[]
+        {
+            -0.5f,  0.5f,   0f,
+            0.5f,   0.5f,   0f,
+            0.5f,   -0.5f,  0f,
+            -0.5f,  -0.5f,  0f
+        };
+
+        indices = new uint[]
+        {
+            0, 1, 2,
+            2, 3, 0
+        };
+
+        texCoords = new float[]
+        {
+            0f, 1f,
+            1f, 1f,
+            1f, 0f,
+            0f, 0f
+        };
+
         EBO = GL.GenBuffer();
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
         GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length *
             sizeof(uint), indices, BufferUsageHint.StaticDraw);
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+
+        //Create Bind_Texture
+        textureVBO = GL.GenBuffer();
+        GL.BindBuffer(BufferTarget.ArrayBuffer, textureVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, texCoords.Length *
+            sizeof(float), texCoords, BufferUsageHint.StaticDraw);
+        //Point a slot number 1
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
+        //Enable the slot
+        GL.EnableVertexArrayAttrib(VAO, 1);
 
         VAO = GL.GenVertexArray();
         VBO = GL.GenBuffer();
@@ -51,7 +75,33 @@ internal class Game: GameWindow
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
         GL.EnableVertexArrayAttrib(VAO, 0);
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
-        GL.BindVertexArray(0);
+        //GL.BindVertexArray(0);
+
+        //Texture Loading
+        textureID = GL.GenTexture();
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture2D, textureID);
+
+        //Texture Parameters
+        GL.TexParameter(TextureTarget.Texture2D,
+            TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+        GL.TexParameter(TextureTarget.Texture2D,
+            TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+        GL.TexParameter(TextureTarget.Texture2D,
+            TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+        GL.TexParameter(TextureTarget.Texture2D,
+            TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+
+        //Load Image
+        StbImage.stbi_set_flip_vertically_on_load(1);
+        ImageResult boxTexture = ImageResult.FromStream(File.OpenRead(
+            "../../../Textures/pineapples.jpg"), ColorComponents.RedGreenBlueAlpha);
+
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+            boxTexture.Width, boxTexture.Height, 0, PixelFormat.Rgba,
+            PixelType.UnsignedByte, boxTexture.Data);
+
+        GL.BindTexture(TextureTarget.Texture2D, 0);
 
         shaderProgram = new Shader();
         shaderProgram.LoadShaders();
@@ -59,9 +109,12 @@ internal class Game: GameWindow
 
     protected override void OnUnload()
     {
+        base.OnUnload();
+
         GL.DeleteBuffer(VAO);
         GL.DeleteBuffer(VBO);
         GL.DeleteBuffer(EBO);
+        GL.DeleteTexture(textureID);
 
         shaderProgram.DeleteShader();
     }
@@ -72,7 +125,9 @@ internal class Game: GameWindow
         GL.Clear(ClearBufferMask.ColorBufferBit);
 
         shaderProgram.UseShader();
-        //GL.BindVertexArray(VAO);
+        GL.BindTexture(TextureTarget.Texture2D, textureID);
+
+        GL.BindVertexArray(VAO);
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
         GL.DrawElements(PrimitiveType.Triangles, indices.Length,
             DrawElementsType.UnsignedInt, 0);
@@ -98,23 +153,6 @@ internal class Game: GameWindow
         this.width = e.Width;
         this.height = e.Height;
     }
-
-    //public static string LoadShaderSource(string filepath)
-    //{
-    //    string shaderSource = "";
-    //    try
-    //    {
-    //        using (StreamReader reader = new StreamReader("../../../Shaders/" + filepath))
-    //        {
-    //            shaderSource = reader.ReadToEnd();
-    //        }
-    //    }
-    //    catch (Exception e)
-    //    {
-    //        Console.WriteLine("Failed to load shader source file:" + e.Message);
-    //    }
-    //    return shaderSource;
-    //}
 };
 
 
