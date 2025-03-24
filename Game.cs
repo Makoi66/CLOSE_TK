@@ -19,16 +19,29 @@ internal class Game: GameWindow
 
     float[] vertices =
     {
-        0f,     0.5f,   0f, //top
-        -0.5f,  -0.5f,  0f, //left
-        0.5f,   -0.5f,  0f  //right
+        -0.5f,  0.5f,   0f,
+        0.5f,   0.5f,   0f,
+        0.5f,   -0.5f,  0f,
+        -0.5f,  -0.5f,  0f
     };
+        uint[] indices =
+        {
+        0, 1, 2,
+        2, 3, 0
+    };
+    int EBO;
     int VAO;
     int VBO;
     Shader shaderProgram;
 
     protected override void OnLoad()
     {
+        EBO = GL.GenBuffer();
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length *
+            sizeof(uint), indices, BufferUsageHint.StaticDraw);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+
         VAO = GL.GenVertexArray();
         VBO = GL.GenBuffer();
         GL.BindBuffer(BufferTarget.ArrayBuffer, VBO);
@@ -48,6 +61,7 @@ internal class Game: GameWindow
     {
         GL.DeleteBuffer(VAO);
         GL.DeleteBuffer(VBO);
+        GL.DeleteBuffer(EBO);
 
         shaderProgram.DeleteShader();
     }
@@ -58,8 +72,10 @@ internal class Game: GameWindow
         GL.Clear(ClearBufferMask.ColorBufferBit);
 
         shaderProgram.UseShader();
-        GL.BindVertexArray(VAO);
-        GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        //GL.BindVertexArray(VAO);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
+        GL.DrawElements(PrimitiveType.Triangles, indices.Length,
+            DrawElementsType.UnsignedInt, 0);
 
         Context.SwapBuffers();
 
