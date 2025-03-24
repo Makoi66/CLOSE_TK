@@ -50,33 +50,6 @@ internal class Game: GameWindow
             0f, 0f
         };
 
-        EBO = GL.GenBuffer();
-        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
-        GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length *
-            sizeof(uint), indices, BufferUsageHint.StaticDraw);
-        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
-
-        //Create Bind_Texture
-        textureVBO = GL.GenBuffer();
-        GL.BindBuffer(BufferTarget.ArrayBuffer, textureVBO);
-        GL.BufferData(BufferTarget.ArrayBuffer, texCoords.Length *
-            sizeof(float), texCoords, BufferUsageHint.StaticDraw);
-        //Point a slot number 1
-        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
-        //Enable the slot
-        GL.EnableVertexArrayAttrib(VAO, 1);
-
-        VAO = GL.GenVertexArray();
-        VBO = GL.GenBuffer();
-        GL.BindBuffer(BufferTarget.ArrayBuffer, VBO);
-        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float),
-            vertices, BufferUsageHint.StaticDraw);
-        GL.BindVertexArray(VAO);
-        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-        GL.EnableVertexArrayAttrib(VAO, 0);
-        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
-        //GL.BindVertexArray(0);
-
         //Texture Loading
         textureID = GL.GenTexture();
         GL.ActiveTexture(TextureUnit.Texture0);
@@ -101,6 +74,37 @@ internal class Game: GameWindow
             boxTexture.Width, boxTexture.Height, 0, PixelFormat.Rgba,
             PixelType.UnsignedByte, boxTexture.Data);
 
+        VAO = GL.GenVertexArray();
+        VBO = GL.GenBuffer();
+        EBO = GL.GenBuffer();
+        textureVBO = GL.GenBuffer();
+
+        GL.BindVertexArray(VAO);
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, VBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float),
+            vertices, BufferUsageHint.StaticDraw);
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
+        GL.EnableVertexArrayAttrib(VAO, 0);
+
+        //Create Bind_Texture
+        GL.BindBuffer(BufferTarget.ArrayBuffer, textureVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, texCoords.Length *
+            sizeof(float), texCoords, BufferUsageHint.StaticDraw);
+        
+        //Point a slot number 1
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
+        
+        //Enable the slot
+        GL.EnableVertexArrayAttrib(VAO, 1);
+
+
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length *
+            sizeof(uint), indices, BufferUsageHint.StaticDraw);
+        
+
+        GL.BindVertexArray(0);
         GL.BindTexture(TextureTarget.Texture2D, 0);
 
         shaderProgram = new Shader();
@@ -111,9 +115,10 @@ internal class Game: GameWindow
     {
         base.OnUnload();
 
-        GL.DeleteBuffer(VAO);
+        GL.DeleteVertexArray(VAO);
         GL.DeleteBuffer(VBO);
         GL.DeleteBuffer(EBO);
+        GL.DeleteBuffer(textureVBO);
         GL.DeleteTexture(textureID);
 
         shaderProgram.DeleteShader();
@@ -128,7 +133,6 @@ internal class Game: GameWindow
         GL.BindTexture(TextureTarget.Texture2D, textureID);
 
         GL.BindVertexArray(VAO);
-        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
         GL.DrawElements(PrimitiveType.Triangles, indices.Length,
             DrawElementsType.UnsignedInt, 0);
 
@@ -190,8 +194,12 @@ public class Shader
         GL.AttachShader(shaderHandle, fragmentShader);
 
         GL.LinkProgram(shaderHandle);
-
-        //GL.DeleteProgram(shaderProgram);
+        GL.GetProgram(shaderHandle, GetProgramParameterName.LinkStatus, out int success3);
+        if (success3 == 0)
+        {
+            string infoLog = GL.GetProgramInfoLog(shaderHandle);
+            Console.WriteLine(infoLog);
+        }
 
     }
 
