@@ -124,6 +124,8 @@ internal class Game: GameWindow
         shaderProgram.DeleteShader();
     }
 
+    float yRot = 0f;
+
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         GL.ClearColor(0.0f, 0.99f, 0.66f, 1f);
@@ -138,6 +140,28 @@ internal class Game: GameWindow
 
         Context.SwapBuffers();
 
+        //Tranformation
+        //Matrix4 model = Matrix4.Identity; 
+        Matrix4 model = Matrix4.CreateRotationY(yRot % 90);
+        Matrix4 translation = Matrix4.CreateTranslation(0f, 0f, -1f);
+        model *= translation;
+        Matrix4 view = Matrix4.Identity;
+        Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(
+            MathHelper.DegreesToRadians(60.0f), width / height, 0.1f, 100.0f);
+
+        //model = Matrix4.CreateTranslation(0f, 0f, -1f);
+
+        int modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
+        int viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
+        int projectionLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "projection");
+
+
+        GL.UniformMatrix4(modelLocation, true, ref model);
+        GL.UniformMatrix4(viewLocation, true, ref view);
+        GL.UniformMatrix4(projectionLocation, true, ref projection);
+
+        
+        yRot = yRot + 0.0005f;
         base.OnRenderFrame(args);
     }
 
@@ -163,7 +187,7 @@ internal class Game: GameWindow
 
 public class Shader
 {
-    int shaderHandle;
+    public int shaderHandle;
 
     public void LoadShaders()
     {
