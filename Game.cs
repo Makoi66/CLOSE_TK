@@ -1,4 +1,5 @@
-﻿using OpenTK.Audio.OpenAL;
+﻿using CLOSE_TK;
+using OpenTK.Audio.OpenAL;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -13,9 +14,11 @@ internal class Game: GameWindow
     private int width, height;
     private int VAO, VBO, EBO, textureVBO, textureID;
     private Shader shaderProgram;
+    private List<Vector3> vertices;
     private uint[] indices;
-    private float[] vertices;
-    private float[] texCoords;
+    private List<Vector2> texCoords;
+
+    Camera camera;
 
     public Game(int width, int height) : base
     (GameWindowSettings.Default, NativeWindowSettings.Default)
@@ -28,26 +31,103 @@ internal class Game: GameWindow
     protected override void OnLoad()
     {
         base.OnLoad();
-        vertices = new float[]
-        {
-            -0.5f,  0.5f,   0f,
-            0.5f,   0.5f,   0f,
-            0.5f,   -0.5f,  0f,
-            -0.5f,  -0.5f,  0f
+        vertices = new List<Vector3>()
+        {   
+            //Передняя грань (0-3)
+            new Vector3(-0.5f,  -0.5f,   0.5f), //Нижний левый
+            new Vector3( 0.5f,  -0.5f,   0.5f), //Нижний правый
+            new Vector3( 0.5f,   0.5f,   0.5f), //Верхний правый
+            new Vector3(-0.5f,   0.5f,   0.5f), //Верхний левый
+
+            //Правая грань (4-7)
+            new Vector3( 0.5f,  -0.5f,   0.5f), //Нижний левый
+            new Vector3( 0.5f,  -0.5f,  -0.5f), //Нижний правый
+            new Vector3( 0.5f,   0.5f,  -0.5f), //Верхний правый
+            new Vector3( 0.5f,   0.5f,   0.5f), //Верхний левый
+
+            //Левая грань (8-11)
+            new Vector3(-0.5f,  -0.5f,  -0.5f), //Нижний левый
+            new Vector3(-0.5f,  -0.5f,   0.5f), //Нижний правый
+            new Vector3(-0.5f,   0.5f,   0.5f), //Верхний правый
+            new Vector3(-0.5f,   0.5f,  -0.5f), //Верхний левый
+
+            //Задняя грань (12-15)
+            new Vector3( 0.5f,  -0.5f,  -0.5f), //Нижний левый
+            new Vector3(-0.5f,  -0.5f,  -0.5f), //Нижний правый
+            new Vector3(-0.5f,   0.5f,  -0.5f), //Верхний правый
+            new Vector3( 0.5f,   0.5f,  -0.5f), //Верхний левый
+
+            //Верхняя грань (16-19)
+            new Vector3(-0.5f,   0.5f,   0.5f), //Передний левый
+            new Vector3( 0.5f,   0.5f,   0.5f), //Передний правый
+            new Vector3( 0.5f,   0.5f,  -0.5f), //Задний правый
+            new Vector3(-0.5f,   0.5f,  -0.5f), //Задний левый
+            
+            //Нижняя грань (20-23)
+            new Vector3(-0.5f,   -0.5f,   0.5f), //Передний левый
+            new Vector3( 0.5f,   -0.5f,   0.5f), //Передний правый
+            new Vector3( 0.5f,   -0.5f,  -0.5f), //Задний правый
+            new Vector3(-0.5f,   -0.5f,  -0.5f), //Задний левый
         };
 
         indices = new uint[]
         {
-            0, 1, 2,
-            2, 3, 0
+            //Передняя
+            0, 1, 2, 
+            2, 3, 0,
+
+            //Правая
+            4, 5, 6,
+            6, 4, 7,
+
+            //Левая
+            8, 9, 10,
+            10, 8, 11,
+
+            //Задняя
+            12, 13, 14,
+            14, 12, 15,
+
+            //Верхняя
+            16, 17, 18,
+            18, 16, 19,
+
+            //Нижняя
+            20, 21, 22,
+            22, 20, 23
         };
 
-        texCoords = new float[]
+        texCoords = new List<Vector2>()
         {
-            0f, 1f,
-            1f, 1f,
-            1f, 0f,
-            0f, 0f
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
         };
 
         //Texture Loading
@@ -82,15 +162,17 @@ internal class Game: GameWindow
         GL.BindVertexArray(VAO);
 
         GL.BindBuffer(BufferTarget.ArrayBuffer, VBO);
-        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float),
-            vertices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            vertices.Count * Vector3.SizeInBytes * sizeof(float),
+            vertices.ToArray(), BufferUsageHint.StaticDraw);
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
         GL.EnableVertexArrayAttrib(VAO, 0);
 
         //Create Bind_Texture
         GL.BindBuffer(BufferTarget.ArrayBuffer, textureVBO);
-        GL.BufferData(BufferTarget.ArrayBuffer, texCoords.Length *
-            sizeof(float), texCoords, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            texCoords.Count * Vector3.SizeInBytes * sizeof(float),
+            texCoords.ToArray(), BufferUsageHint.StaticDraw);
         
         //Point a slot number 1
         GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
@@ -100,8 +182,9 @@ internal class Game: GameWindow
 
 
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
-        GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length *
-            sizeof(uint), indices, BufferUsageHint.StaticDraw);
+        GL.BufferData(BufferTarget.ElementArrayBuffer,
+            indices.Length * sizeof(uint),
+            indices, BufferUsageHint.StaticDraw);
         
 
         GL.BindVertexArray(0);
@@ -109,6 +192,11 @@ internal class Game: GameWindow
 
         shaderProgram = new Shader();
         shaderProgram.LoadShaders();
+
+        GL.Enable(EnableCap.DepthTest);
+
+        camera = new Camera(width, height, Vector3.Zero);
+        CursorState = CursorState.Grabbed;
     }
 
     protected override void OnUnload()
@@ -129,27 +217,25 @@ internal class Game: GameWindow
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         GL.ClearColor(0.0f, 0.99f, 0.66f, 1f);
-        GL.Clear(ClearBufferMask.ColorBufferBit);
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
         shaderProgram.UseShader();
         GL.BindTexture(TextureTarget.Texture2D, textureID);
 
         GL.BindVertexArray(VAO);
-        GL.DrawElements(PrimitiveType.Triangles, indices.Length,
+        GL.DrawElements(PrimitiveType.Triangles,
+            vertices.Count * Vector3.SizeInBytes,
             DrawElementsType.UnsignedInt, 0);
 
         Context.SwapBuffers();
 
         //Tranformation
-        //Matrix4 model = Matrix4.Identity; 
         Matrix4 model = Matrix4.CreateRotationY(yRot % 90);
         Matrix4 translation = Matrix4.CreateTranslation(0f, 0f, -1f);
         model *= translation;
-        Matrix4 view = Matrix4.Identity;
-        Matrix4 projection = Matrix4.CreatePerspectiveFieldOfView(
-            MathHelper.DegreesToRadians(60.0f), width / height, 0.1f, 100.0f);
+        Matrix4 view = camera.GetViewMatrix();
+        Matrix4 projection = camera.GetProjection();
 
-        //model = Matrix4.CreateTranslation(0f, 0f, -1f);
 
         int modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
         int viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
@@ -171,7 +257,11 @@ internal class Game: GameWindow
         {
             Close();
         }
+
+        MouseState mouse = MouseState;
+        KeyboardState input = KeyboardState;
         base.OnUpdateFrame(args);
+        camera.Update(input, mouse, args);
     }
 
     protected override void OnResize(ResizeEventArgs e)
