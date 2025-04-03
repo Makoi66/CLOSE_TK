@@ -34,6 +34,12 @@ namespace CLOSE_TK
             return x;
         }
 
+        //public void UpdateScreenSize(int width, int height)
+        //{
+        //    SCREENWIDTH = width;
+        //    SCREENWIDTH = height;
+        //}
+
         private void UpdateVectors()
         {
             front.X = MathF.Cos(MathHelper.DegreesToRadians(pitch)) *
@@ -47,9 +53,9 @@ namespace CLOSE_TK
             up = Vector3.Normalize(Vector3.Cross(right, front));
         }
 
-        public Camera(int widht, int height, Vector3 position)
+        public Camera(int width, int height, Vector3 position)
         {
-            SCREENWIDTH = widht;
+            SCREENWIDTH = width;
             SCREENHEIGHT = height;
             this.position = position;
         }
@@ -59,13 +65,12 @@ namespace CLOSE_TK
             return Matrix4.LookAt(position, position + front, up);
         }
 
-        public Matrix4 GetProjection()
+        public Matrix4 GetProjectionMatrix()
         {
             return Matrix4.CreatePerspectiveFieldOfView(
                 MathHelper.DegreesToRadians(60f),
-                SCREENWIDTH / SCREENHEIGHT, 0.1f, 100f);
+                (float)SCREENWIDTH / SCREENHEIGHT, 0.1f, 100f);
         }
-
 
 
         public void InputController(KeyboardState input,
@@ -100,8 +105,8 @@ namespace CLOSE_TK
 
                 lastPos = new Vector2(mouse.X, mouse.Y);
 
-                yaw += deltaX * SENSITIVITY * (float)e.Time;
-                pitch -= deltaY * SENSITIVITY * (float)e.Time;
+                yaw += deltaX * SENSITIVITY * 0.001f;
+                pitch -= deltaY * SENSITIVITY * 0.001f;
                 pitch = Clamp(pitch); 
             }
 

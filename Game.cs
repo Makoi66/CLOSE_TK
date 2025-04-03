@@ -6,19 +6,45 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using StbImageSharp;
+using System.IO;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices.Marshalling;
+
 
 
 internal class Game: GameWindow
 {
     private int width, height;
-    private int VAO, VBO, EBO, textureVBO, textureID;
+
+    private int homeVAO, homeVBO, homeEBO, homeTextureVBO, homeTextureID;
+    private List<Vector3> homeVertices;
+    private List<Vector2> homeTexCoords;
+    private uint[] homeIndices;
+
+    private int groundVAO, groundVBO, groundEBO, groundTextureID;
+    private float[] groundVertices;
+    private uint[] groundIndices;
+
+    private int skyboxVAO, skyboxVBO, skyboxTextureID;
+    private float[] skyboxVertices;
+    private uint[] skyboxIndices;
+
     private Shader shaderProgram;
-    private List<Vector3> vertices;
-    private uint[] indices;
-    private List<Vector2> texCoords;
+    private Shader skyboxShaderProgram;
+
+
+    private bool cursorGrabbed = true;
+    public Vector2 lastPos;
 
     Camera camera;
+    float yRot = 0f;
+
+
+    private int modelLocation, skyboxSamplerLocation;
+    private int viewLocation, skyboxViewLocation;
+    private int projectionLocation, skyboxProjectionLocation;
+
+
 
     public Game(int width, int height) : base
     (GameWindowSettings.Default, NativeWindowSettings.Default)
@@ -31,7 +57,53 @@ internal class Game: GameWindow
     protected override void OnLoad()
     {
         base.OnLoad();
-        vertices = new List<Vector3>()
+        GL.Enable(EnableCap.TextureCubeMapSeamless);
+
+        GL.ClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+
+        PrepareHomeData();
+        PrepareGroundData();
+        PrepareSkyboxData();
+
+        homeTextureID = LoadTexture("../../../Textures/pineapples.jpg");
+        groundTextureID = LoadTexture("../../../Textures/ground.jpg");
+        skyboxTextureID = LoadCubemap(new List<string>
+        {
+            "../../../Textures/Skybox/right.jpg",
+            "../../../Textures/Skybox/left.jpg",
+            "../../../Textures/Skybox/top.jpg",
+            "../../../Textures/Skybox/bottom.jpg",
+            "../../../Textures/Skybox/front.jpg",
+            "../../../Textures/Skybox/back.jpg"
+        });
+
+        SetupHomeBuffers();
+        SetupGroundBuffers();
+        SetupSkyboxBuffers();
+
+        shaderProgram = new Shader("../../../Shaders/shader.vert",
+            "../../../Shaders/shader.frag");
+        skyboxShaderProgram = new Shader("../../../Shaders/skybox.vert",
+            "../../../Shaders/skybox.frag");
+
+        modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
+        viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
+        projectionLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "projection");
+
+        skyboxSamplerLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "skybox");
+        skyboxViewLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "view");
+        skyboxProjectionLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "projection");
+        GL.Uniform1(skyboxSamplerLocation, 0);
+
+        GL.Enable(EnableCap.DepthTest);
+
+        camera = new Camera(width, height, new Vector3(-2.0f, 1.0f, -2.0f));
+        CursorState = CursorState.Grabbed;
+    }
+
+    private void PrepareHomeData()
+    {
+        homeVertices = new List<Vector3>()
         {   
             //Передняя грань (0-3)
             new Vector3(-0.5f,  -0.5f,   0.5f), //Нижний левый
@@ -70,10 +142,43 @@ internal class Game: GameWindow
             new Vector3(-0.5f,   -0.5f,  -0.5f), //Задний левый
         };
 
-        indices = new uint[]
+        homeTexCoords = new List<Vector2>()
         {
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+
+            new Vector2(0f, 1f),
+            new Vector2(1f, 1f),
+            new Vector2(1f, 0f),
+            new Vector2(0f, 0f),
+        };
+
+        homeIndices = new uint[]
+{
             //Передняя
-            0, 1, 2, 
+            0, 1, 2,
             2, 3, 0,
 
             //Правая
@@ -95,45 +200,81 @@ internal class Game: GameWindow
             //Нижняя
             20, 21, 22,
             22, 20, 23
+};
+    }
+
+    private void PrepareGroundData()
+    {
+        float groundSize = 50.0f; // Сделаем землю поменьше для начала
+        float textureRepeat = 25.0f; // Повторение текстуры
+
+        groundVertices = new float[]{
+            groundSize,  0.0f,  groundSize, textureRepeat, 0.0f,
+            -groundSize, 0.0f,  groundSize, 0.0f, 0.0f,
+            -groundSize, 0.0f, -groundSize, 0.0f, textureRepeat,
+            groundSize,  0.0f, -groundSize, textureRepeat, textureRepeat
         };
 
-        texCoords = new List<Vector2>()
+        groundIndices = new uint[]
         {
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
-
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
-
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
-
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
-
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
-
-            new Vector2(0f, 1f),
-            new Vector2(1f, 1f),
-            new Vector2(1f, 0f),
-            new Vector2(0f, 0f),
+            0, 1, 2,
+            0, 2, 3
         };
+    }
 
-        //Texture Loading
-        textureID = GL.GenTexture();
+    private void PrepareSkyboxData()
+    {
+        skyboxVertices = new float[]
+        {
+            1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+            // Left face (-X)
+            -1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f,  1.0f,
+            -1.0f, -1.0f,  1.0f,
+            // Top face (+Y)
+            -1.0f,  1.0f, -1.0f,
+             1.0f,  1.0f, -1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+            -1.0f,  1.0f,  1.0f,
+            -1.0f,  1.0f, -1.0f,
+            // Bottom face (-Y)
+            -1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f,  1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+            -1.0f, -1.0f,  1.0f,
+             1.0f, -1.0f,  1.0f,
+            // Front face (+Z)
+            -1.0f, -1.0f,  1.0f,
+            -1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f,  1.0f,  1.0f,
+             1.0f, -1.0f,  1.0f,
+            -1.0f, -1.0f,  1.0f,
+            // Back face (-Z)
+            -1.0f,  1.0f, -1.0f,
+            -1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f, -1.0f, -1.0f,
+             1.0f,  1.0f, -1.0f,
+            -1.0f,  1.0f, -1.0f,
+        };
+    }
+
+    private int LoadTexture(string path)
+    {
+        int textureHandle = GL.GenTexture();
         GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, textureID);
+        GL.BindTexture(TextureTarget.Texture2D, textureHandle);
 
         //Texture Parameters
         GL.TexParameter(TextureTarget.Texture2D,
@@ -141,115 +282,271 @@ internal class Game: GameWindow
         GL.TexParameter(TextureTarget.Texture2D,
             TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
         GL.TexParameter(TextureTarget.Texture2D,
-            TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            TextureParameterName.TextureMinFilter,
+            (int)TextureMinFilter.LinearMipmapLinear);
         GL.TexParameter(TextureTarget.Texture2D,
-            TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
 
-        //Load Image
-        StbImage.stbi_set_flip_vertically_on_load(1);
-        ImageResult boxTexture = ImageResult.FromStream(File.OpenRead(
-            "../../../Textures/pineapples.jpg"), ColorComponents.RedGreenBlueAlpha);
+        StbImage.stbi_set_flip_vertically_on_load(1); //переворот текстуры
+        ImageResult image = ImageResult.FromStream(File.OpenRead(
+            path), ColorComponents.RedGreenBlueAlpha);
 
         GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
-            boxTexture.Width, boxTexture.Height, 0, PixelFormat.Rgba,
-            PixelType.UnsignedByte, boxTexture.Data);
+            image.Width, image.Height, 0, PixelFormat.Rgba,
+            PixelType.UnsignedByte, image.Data);
+        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
-        VAO = GL.GenVertexArray();
-        VBO = GL.GenBuffer();
-        EBO = GL.GenBuffer();
-        textureVBO = GL.GenBuffer();
-
-        GL.BindVertexArray(VAO);
-
-        GL.BindBuffer(BufferTarget.ArrayBuffer, VBO);
-        GL.BufferData(BufferTarget.ArrayBuffer,
-            vertices.Count * Vector3.SizeInBytes * sizeof(float),
-            vertices.ToArray(), BufferUsageHint.StaticDraw);
-        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 0, 0);
-        GL.EnableVertexArrayAttrib(VAO, 0);
-
-        //Create Bind_Texture
-        GL.BindBuffer(BufferTarget.ArrayBuffer, textureVBO);
-        GL.BufferData(BufferTarget.ArrayBuffer,
-            texCoords.Count * Vector3.SizeInBytes * sizeof(float),
-            texCoords.ToArray(), BufferUsageHint.StaticDraw);
-        
-        //Point a slot number 1
-        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 0, 0);
-        
-        //Enable the slot
-        GL.EnableVertexArrayAttrib(VAO, 1);
-
-
-        GL.BindBuffer(BufferTarget.ElementArrayBuffer, EBO);
-        GL.BufferData(BufferTarget.ElementArrayBuffer,
-            indices.Length * sizeof(uint),
-            indices, BufferUsageHint.StaticDraw);
-        
-
-        GL.BindVertexArray(0);
         GL.BindTexture(TextureTarget.Texture2D, 0);
 
-        shaderProgram = new Shader();
-        shaderProgram.LoadShaders();
+        return textureHandle;
+    }
 
-        GL.Enable(EnableCap.DepthTest);
+    private void SetupHomeBuffers()
+    {
+        homeVAO = GL.GenVertexArray();
+        homeVBO = GL.GenBuffer();
+        homeTextureVBO = GL.GenBuffer();
+        homeEBO = GL.GenBuffer();
 
-        camera = new Camera(width, height, Vector3.Zero);
-        CursorState = CursorState.Grabbed;
+        GL.BindVertexArray(homeVAO);
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, homeVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            homeVertices.Count * Vector3.SizeInBytes,
+            homeVertices.ToArray(), BufferUsageHint.StaticDraw);
+
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vector3.SizeInBytes, 0);
+
+        GL.EnableVertexAttribArray(0);
+
+        //Create Bind_Texture
+        GL.BindBuffer(BufferTarget.ArrayBuffer, homeTextureVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            homeTexCoords.Count * Vector2.SizeInBytes,
+            homeTexCoords.ToArray(), BufferUsageHint.StaticDraw);
+
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, Vector2.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(1);
+
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, homeEBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer,
+            homeIndices.Length * sizeof(uint),
+            homeIndices, BufferUsageHint.StaticDraw);
+
+        GL.BindVertexArray(0);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+    }
+
+    private void SetupGroundBuffers()
+    {
+        groundVAO = GL.GenVertexArray();
+        groundVBO = GL.GenBuffer();
+        groundEBO = GL.GenBuffer();
+
+        GL.BindVertexArray(groundVAO);
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, groundVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            groundVertices.Length * sizeof(float),
+            groundVertices, BufferUsageHint.StaticDraw);
+
+        int stride = 5 * sizeof(float);
+
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, 0);
+        GL.EnableVertexAttribArray(0);
+
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        GL.EnableVertexAttribArray(1);
+
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, groundEBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer,
+            groundIndices.Length * sizeof(uint),
+            groundIndices, BufferUsageHint.StaticDraw);
+
+        GL.BindVertexArray(0);
+    }
+
+    private void SetupSkyboxBuffers()
+    {
+        skyboxVAO = GL.GenVertexArray();
+        skyboxVBO = GL.GenBuffer();
+
+        GL.BindVertexArray(skyboxVAO);
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, skyboxVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            skyboxVertices.Length * sizeof(float), skyboxVertices,
+            BufferUsageHint.StaticDraw);
+
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false,
+            3 * sizeof(float), 0);
+        GL.EnableVertexAttribArray(0);
+
+        GL.BindVertexArray(0);
+    }
+
+    private int LoadCubemap(List<string> facesPaths)
+    {
+        int textureID = GL.GenTexture();
+        GL.BindTexture(TextureTarget.TextureCubeMap, textureID);
+
+        StbImage.stbi_set_flip_vertically_on_load(0);
+
+        for (int i = 0; i < facesPaths.Count; i++)
+        {
+            ImageResult image = ImageResult.FromStream(
+                File.OpenRead(facesPaths[i]),
+                ColorComponents.RedGreenBlueAlpha);
+
+            GL.TexImage2D(TextureTarget.TextureCubeMapPositiveX + i, 0, 
+                PixelInternalFormat.Rgba, image.Width, image.Height, 0, 
+                PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
+        }
+
+        StbImage.stbi_set_flip_vertically_on_load(1);
+
+        GL.TexParameter(TextureTarget.TextureCubeMap, 
+            TextureParameterName.TextureMinFilter, 
+            (int)TextureMinFilter.Linear);
+        GL.TexParameter(TextureTarget.TextureCubeMap,
+            TextureParameterName.TextureMagFilter,
+            (int)TextureMagFilter.Linear);
+        GL.TexParameter(TextureTarget.TextureCubeMap,
+            TextureParameterName.TextureWrapS,
+            (int)TextureWrapMode.ClampToEdge);
+        GL.TexParameter(TextureTarget.TextureCubeMap,
+            TextureParameterName.TextureWrapT,
+            (int)TextureWrapMode.ClampToEdge);
+        GL.TexParameter(TextureTarget.TextureCubeMap,
+            TextureParameterName.TextureWrapR,
+            (int)TextureWrapMode.ClampToEdge);
+
+        GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+
+        return textureID;
     }
 
     protected override void OnUnload()
     {
         base.OnUnload();
 
-        GL.DeleteVertexArray(VAO);
-        GL.DeleteBuffer(VBO);
-        GL.DeleteBuffer(EBO);
-        GL.DeleteBuffer(textureVBO);
-        GL.DeleteTexture(textureID);
+        GL.DeleteVertexArray(homeVAO);
+        GL.DeleteBuffer(homeVBO);
+        GL.DeleteBuffer(homeEBO);
+        GL.DeleteBuffer(homeTextureVBO);
+        GL.DeleteTexture(homeTextureID);
+
+        GL.DeleteVertexArray(groundVAO);
+        GL.DeleteBuffer(groundVBO);
+        GL.DeleteBuffer(groundEBO);
+        GL.DeleteTexture(groundTextureID);
+
+        GL.DeleteVertexArray(skyboxVAO);
+        GL.DeleteBuffer(skyboxVBO);
+        GL.DeleteTexture(skyboxTextureID);
 
         shaderProgram.DeleteShader();
+        skyboxShaderProgram.DeleteShader();
     }
-
-    float yRot = 0f;
 
     protected override void OnRenderFrame(FrameEventArgs args)
     {
-        GL.ClearColor(0.0f, 0.99f, 0.66f, 1f);
+        base.OnRenderFrame(args);
+
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        shaderProgram.UseShader();
-        GL.BindTexture(TextureTarget.Texture2D, textureID);
+        Matrix4 view = camera.GetViewMatrix();
+        Matrix4 projection = camera.GetProjectionMatrix();
 
-        GL.BindVertexArray(VAO);
+        shaderProgram.UseShader();
+
+        GL.UniformMatrix4(viewLocation, false, ref view);
+        GL.UniformMatrix4(projectionLocation, false, ref projection);
+
+        GL.BindVertexArray(groundVAO);
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture2D, groundTextureID);
+
+        Matrix4 groundModel = Matrix4.Identity;
+        GL.UniformMatrix4(modelLocation, false, ref groundModel);
+
         GL.DrawElements(PrimitiveType.Triangles,
-            vertices.Count * Vector3.SizeInBytes,
+            groundIndices.Length,
             DrawElementsType.UnsignedInt, 0);
+
+        GL.BindVertexArray(homeVAO);
+
+        GL.BindTexture(TextureTarget.Texture2D, homeTextureID);
+
+        yRot += (float)args.Time * 0.5f;
+        Matrix4 homeModel = Matrix4.CreateRotationY(yRot);
+        Matrix4 homeTranslation = Matrix4.CreateTranslation(0f, 0.50001f, 0f);
+        homeModel *= homeTranslation;
+
+        GL.UniformMatrix4(modelLocation, false, ref homeModel);
+
+        GL.DrawElements(PrimitiveType.Triangles, homeIndices.Length,
+            DrawElementsType.UnsignedInt, 0);
+
+        GL.BindVertexArray(0);
+        GL.BindTexture(TextureTarget.Texture2D, 0);
+
+        //Skybox
+        GL.DepthFunc(DepthFunction.Lequal);
+        skyboxShaderProgram.UseShader();
+
+        Matrix4 skyboxView = new Matrix4(new Matrix3(view));
+        GL.UniformMatrix4(skyboxViewLocation, false, ref skyboxView);
+        GL.UniformMatrix4(skyboxProjectionLocation, false, ref projection);
+
+        GL.BindVertexArray(skyboxVAO);
+        GL.ActiveTexture(TextureUnit.Texture0);
+
+        GL.BindTexture(TextureTarget.TextureCubeMap, skyboxTextureID);
+
+        GL.DrawArrays(PrimitiveType.Triangles, 0, 36);
+
+        GL.BindVertexArray(0);
+        GL.DepthFunc(DepthFunction.Less);
 
         Context.SwapBuffers();
 
-        //Tranformation
-        Matrix4 model = Matrix4.CreateRotationY(yRot % 90);
-        Matrix4 translation = Matrix4.CreateTranslation(0f, 0f, -1f);
-        model *= translation;
-        Matrix4 view = camera.GetViewMatrix();
-        Matrix4 projection = camera.GetProjection();
-
-
-        int modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
-        int viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
-        int projectionLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "projection");
-
-
-        GL.UniformMatrix4(modelLocation, true, ref model);
-        GL.UniformMatrix4(viewLocation, true, ref view);
-        GL.UniformMatrix4(projectionLocation, true, ref projection);
-
-        
-        yRot = yRot + 0.0005f;
-        base.OnRenderFrame(args);
     }
+
+
+    private void OnMouseButtonDown(MouseState mouse, FrameEventArgs e)
+    {
+        if (this.IsFocused && mouse.IsButtonDown(MouseButton.Left) && !cursorGrabbed)
+        {
+            this.MousePosition = new Vector2(lastPos.X, lastPos.Y);
+            this.CursorState = CursorState.Grabbed;
+            cursorGrabbed = true;
+        }
+    }
+
+    private void OnFullScreenMode(KeyboardState input, MouseState mouse, FrameEventArgs args)
+    {
+        if (input.IsKeyDown(Keys.LeftAlt) && input.IsKeyDown(Keys.Enter))
+        {
+            if (this.WindowState != WindowState.Fullscreen)
+            {
+                this.WindowState = WindowState.Fullscreen;
+            }
+            else
+            {
+                this.WindowState = WindowState.Normal;
+            }
+        }
+        if (input.IsKeyDown(Keys.LeftControl) && input.IsKeyDown(Keys.LeftAlt) &&
+            input.IsKeyDown(Keys.LeftShift) && cursorGrabbed)
+        {
+            lastPos = new Vector2(mouse.X, mouse.Y);
+            this.CursorState = CursorState.Normal;
+            cursorGrabbed = false;
+        }
+    }
+
 
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
@@ -260,14 +557,25 @@ internal class Game: GameWindow
 
         MouseState mouse = MouseState;
         KeyboardState input = KeyboardState;
+
+        OnMouseButtonDown(mouse, args);
+        OnFullScreenMode(input, mouse, args);
+
         base.OnUpdateFrame(args);
-        camera.Update(input, mouse, args);
+        if (cursorGrabbed)
+        {
+            camera.Update(input, mouse, args);
+        }
     }
 
     protected override void OnResize(ResizeEventArgs e)
     {
         base.OnResize(e);
         GL.Viewport(0, 0, e.Width, e.Height);
+        //if (camera != null)
+        //{
+        //    camera.UpdateScreenSize(e.Width, e.Height);
+        //}
         this.width = e.Width;
         this.height = e.Height;
     }
@@ -279,17 +587,12 @@ public class Shader
 {
     public int shaderHandle;
 
-    public void LoadShaders()
+    public Shader(string vertPath, string fragPath)
     {
         shaderHandle = GL.CreateProgram();
         int vertexShader = GL.CreateShader(ShaderType.VertexShader);
-        GL.ShaderSource(vertexShader, LoadShaderSource("shader.vert"));
+        GL.ShaderSource(vertexShader, LoadShaderSource(vertPath));
         GL.CompileShader(vertexShader);
-
-        int fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
-        GL.ShaderSource(fragmentShader, LoadShaderSource("shader.frag"));
-        GL.CompileShader(fragmentShader);
-
         GL.GetShader(vertexShader, ShaderParameter.CompileStatus, out int success1);
         if (success1 == 0)
         {
@@ -297,6 +600,9 @@ public class Shader
             Console.WriteLine(infoLog);
         }
 
+        int fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
+        GL.ShaderSource(fragmentShader, LoadShaderSource(fragPath));
+        GL.CompileShader(fragmentShader);
         GL.GetShader(fragmentShader, ShaderParameter.CompileStatus, out int success2);
         if (success2 == 0)
         {
@@ -306,8 +612,8 @@ public class Shader
 
         GL.AttachShader(shaderHandle, vertexShader);
         GL.AttachShader(shaderHandle, fragmentShader);
-
         GL.LinkProgram(shaderHandle);
+
         GL.GetProgram(shaderHandle, GetProgramParameterName.LinkStatus, out int success3);
         if (success3 == 0)
         {
@@ -315,14 +621,19 @@ public class Shader
             Console.WriteLine(infoLog);
         }
 
+        GL.DetachShader(shaderHandle, vertexShader);
+        GL.DetachShader(shaderHandle, fragmentShader);
+        GL.DeleteShader(fragmentShader);
+        GL.DeleteShader(vertexShader);
     }
+
 
     public static string LoadShaderSource(string filepath)
     {
         string shaderSource = "";
         try
         {
-            using (StreamReader reader = new StreamReader("../../../Shaders/" + filepath))
+            using (StreamReader reader = new StreamReader(filepath))
             {
                 shaderSource = reader.ReadToEnd();
             }
