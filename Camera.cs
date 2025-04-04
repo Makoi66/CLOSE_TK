@@ -18,10 +18,10 @@ namespace CLOSE_TK
 
         private float pitch;
         private float yaw = -90.0f;
-        private bool firstMove = true;
+        public bool firstMove = true;
         public Vector2 lastPos;
 
-        public Vector3 position;
+        public Vector3 Position;
 
         Vector3 up = Vector3.UnitY;
         Vector3 front = -Vector3.UnitZ;
@@ -34,21 +34,22 @@ namespace CLOSE_TK
             return x;
         }
 
-        //public void UpdateScreenSize(int width, int height)
-        //{
-        //    SCREENWIDTH = width;
-        //    SCREENWIDTH = height;
-        //}
+        public void UpdateScreenSize(int width, int height)
+        {
+            SCREENWIDTH = width;
+            SCREENHEIGHT = height;
+        }
 
         private void UpdateVectors()
         {
-            front.X = MathF.Cos(MathHelper.DegreesToRadians(pitch)) *
+            Vector3 tempFront;
+            tempFront.X = MathF.Cos(MathHelper.DegreesToRadians(pitch)) *
                 MathF.Cos(MathHelper.DegreesToRadians(yaw));
-            front.Y = MathF.Sin(MathHelper.DegreesToRadians(pitch));
-            front.Z = MathF.Cos(MathHelper.DegreesToRadians(pitch)) *
+            tempFront.Y = MathF.Sin(MathHelper.DegreesToRadians(pitch));
+            tempFront.Z = MathF.Cos(MathHelper.DegreesToRadians(pitch)) *
                 MathF.Sin(MathHelper.DegreesToRadians(yaw));
+            front = Vector3.Normalize(tempFront);
 
-            front = Vector3.Normalize(front);
             right = Vector3.Normalize(Vector3.Cross(front, Vector3.UnitY));
             up = Vector3.Normalize(Vector3.Cross(right, front));
         }
@@ -57,65 +58,90 @@ namespace CLOSE_TK
         {
             SCREENWIDTH = width;
             SCREENHEIGHT = height;
-            this.position = position;
+            this.Position = position;
+
+            UpdateVectors();
         }
 
         public Matrix4 GetViewMatrix()
         {
-            return Matrix4.LookAt(position, position + front, up);
+            return Matrix4.LookAt(Position, Position + front, up);
         }
 
         public Matrix4 GetProjectionMatrix()
         {
+            float aspectRatio = (SCREENHEIGHT == 0) ? 1.0f : 
+                (float)SCREENWIDTH / SCREENHEIGHT;
             return Matrix4.CreatePerspectiveFieldOfView(
                 MathHelper.DegreesToRadians(60f),
-                (float)SCREENWIDTH / SCREENHEIGHT, 0.1f, 100f);
+                aspectRatio, 0.1f, 200f);
         }
 
 
         public void InputController(KeyboardState input,
-            MouseState mouse, FrameEventArgs e)
+            MouseState mouse, FrameEventArgs e, out Vector2 currentPos)
         {
+            currentPos = new Vector2(mouse.X, mouse.Y);
+
+            float time = (float)e.Time;
             if (input.IsKeyDown(Keys.W))
             {
-                position += front * SPEED * (float)e.Time;
+                Position += front * SPEED * time;
             }
             if (input.IsKeyDown(Keys.A))
             {
-                position -= right * SPEED * (float)e.Time;
+                Position -= right * SPEED * time;
             }
             if (input.IsKeyDown(Keys.S))
             {
-                position -= front * SPEED * (float)e.Time;
+                Position -= front * SPEED * time;
             }
             if (input.IsKeyDown(Keys.D))
             {
-                position += right * SPEED * (float)e.Time;
+                Position += right * SPEED * time;
             }
+            if (input.IsKeyDown(Keys.Space))
+            {
+                Position += Vector3.UnitY * SPEED * time;
+            }
+            if (input.IsKeyDown(Keys.LeftShift))
+            {
+                Position -= Vector3.UnitY * SPEED * time;
+            }
+
+            if(Position.Y < 0.2f)
+            {
+                Position.Y = 0.2f;
+            }
+
+            var deltaX = 0.0f;
+            var deltaY = 0.0f;
 
             if (firstMove)
             {
-                lastPos = new Vector2(position.X, position.Y);
+                lastPos = currentPos;
                 firstMove = false;
             }
             else
             {
-                var deltaX = mouse.X - lastPos.X;
-                var deltaY = mouse.Y - lastPos.Y;
-
-                lastPos = new Vector2(mouse.X, mouse.Y);
+                deltaX = currentPos.X - lastPos.X;
+                deltaY = currentPos.Y - lastPos.Y;
 
                 yaw += deltaX * SENSITIVITY * 0.001f;
                 pitch -= deltaY * SENSITIVITY * 0.001f;
-                pitch = Clamp(pitch); 
+                pitch = Clamp(pitch);
+
+                lastPos = currentPos;
             }
 
             UpdateVectors();
         }
+
         public void Update(KeyboardState input,
-            MouseState mouse, FrameEventArgs e)
+            MouseState mouse, FrameEventArgs e, out Vector2 newLastPos)
         {
-            InputController(input, mouse, e);
+            newLastPos = new Vector2(mouse.X, mouse.Y);
+            InputController(input, mouse, e, out newLastPos);
         }
     }
 }

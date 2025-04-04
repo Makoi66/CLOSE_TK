@@ -16,7 +16,14 @@ internal class Game: GameWindow
 {
     private int width, height;
 
+    private bool cursorGrabbed = true;
+    public Vector2 lastPos;
+
+    Camera camera;
+    float yRot = 0f;
+
     private int homeVAO, homeVBO, homeEBO, homeTextureVBO, homeTextureID;
+    private int homeNormalsVBO;
     private List<Vector3> homeVertices;
     private List<Vector2> homeTexCoords;
     private uint[] homeIndices;
@@ -27,22 +34,61 @@ internal class Game: GameWindow
 
     private int skyboxVAO, skyboxVBO, skyboxTextureID;
     private float[] skyboxVertices;
-    private uint[] skyboxIndices;
+
+    private int sphereVAO, sphereVBO, sphereEBO;
+    private List<Vector3> sphereVertices;
+    private List<uint> sphereIndices;
+    private int sphereIndexCount;
+
 
     private Shader shaderProgram;
     private Shader skyboxShaderProgram;
 
-
-    private bool cursorGrabbed = true;
-    public Vector2 lastPos;
-
-    Camera camera;
-    float yRot = 0f;
+    private Shader unlitShader;
+    private int unlitModelLoc, unlitViewLoc, unlitProjLoc, unlitColorLoc;
 
 
     private int modelLocation, skyboxSamplerLocation;
     private int viewLocation, skyboxViewLocation;
     private int projectionLocation, skyboxProjectionLocation;
+
+    // Параметры цикла и освещения
+    private float timeOfDay = 0.0f; // 0.0 = восход/полдень, PI = закат/полночь
+    private float cycleSpeed = 0.1f; // Скорость смены дня/ночи (радианы в секунду)
+    private float orbitRadius = 50.0f; // Насколько далеко солнце/луна
+    private Vector3 sunPos, moonPos;   // Текущие позиции
+    private Vector3 currentLightDir;   // Направление НА источник света
+    private Vector3 currentLightColor; // Цвет источника
+    private Vector3 currentAmbientColor; // Цвет фонового освещения
+    private int skyboxBrightnessFactorLoc;
+    private float sunAltitudeFactor;
+
+
+    //Цвета для дня/ночи
+    private readonly Vector3 sunColorDay = new Vector3(1.0f, 1.0f, 0.85f); // Яркий желтоватый
+    private readonly Vector3 sunColorSunrise = new Vector3(1.0f, 0.55f, 0.35f); // Оранжево-красный
+    private readonly Vector3 sunColorSunset = new Vector3(1.0f, 0.75f, 0.35f); // Красно-розовый
+    private readonly Vector3 moonColorNight = new Vector3(0.6f, 0.6f, 0.8f); // Тусклый голубоватый
+
+    private readonly Vector3 ambientDay = new Vector3(0.55f, 0.55f, 0.65f); // Светло-голубой эмбиент
+    private readonly Vector3 ambientSunrise = new Vector3(0.4f, 0.3f, 0.3f); // Теплый красный эмбиент
+    private readonly Vector3 ambientSunset = new Vector3(0.45f, 0.25f, 0.3f); // Теплый красноватый эмбиент
+    private readonly Vector3 ambientNight = new Vector3(0.15f, 0.15f, 0.25f); // Темно-синий эмбиент
+
+    private readonly Vector3 skyColorDay = new Vector3(0.5f, 0.7f, 1.0f); // Цвет неба днем
+    private readonly Vector3 skyColorSunrise = new Vector3(0.9f, 0.55f, 0.45f); // Оранжевое небо
+    private readonly Vector3 skyColorSunset = new Vector3(0.95f, 0.45f, 0.5f); // Красное небо
+    private readonly Vector3 skyColorNight = new Vector3(0.01f, 0.01f, 0.05f); // Цвет неба ночью
+
+    private const float HorizonTransitionThreshold = 0.35f;
+    private const float DayLightBoost = 1.4f;
+    private const float MoonLightIntensity = 0.8f;
+
+    //Локации для uniform'ов освещения в основном шейдере
+    private int lightDirLoc, lightColorLoc, ambientColorLoc, viewPosLoc;
+
+    //Данные нормалей для куба
+    private List<Vector3> homeNormals;
 
 
 
@@ -57,13 +103,24 @@ internal class Game: GameWindow
     protected override void OnLoad()
     {
         base.OnLoad();
+        GL.Enable(EnableCap.DepthTest);
         GL.Enable(EnableCap.TextureCubeMapSeamless);
 
-        GL.ClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+        // --- Генерируем геометрию сферы ---
+        var sphereData = GeometryFactory.CreateSphereVertices(1.0f, 36, 18); // Радиус 1, детализация средняя
+        sphereVertices = sphereData.vertices;
+        sphereIndices = sphereData.indices;
+        sphereIndexCount = sphereIndices.Count;
+        SetupSphereBuffers(); // Настраиваем VAO/VBO/EBO для сферы
 
         PrepareHomeData();
+        SetupHomeBuffers();
+
         PrepareGroundData();
+        SetupGroundBuffers();
+
         PrepareSkyboxData();
+        SetupSkyboxBuffers();
 
         homeTextureID = LoadTexture("../../../Textures/pineapples.jpg");
         groundTextureID = LoadTexture("../../../Textures/ground.jpg");
@@ -77,29 +134,66 @@ internal class Game: GameWindow
             "../../../Textures/Skybox/back.jpg"
         });
 
-        SetupHomeBuffers();
-        SetupGroundBuffers();
-        SetupSkyboxBuffers();
 
         shaderProgram = new Shader("../../../Shaders/shader.vert",
             "../../../Shaders/shader.frag");
         skyboxShaderProgram = new Shader("../../../Shaders/skybox.vert",
             "../../../Shaders/skybox.frag");
+        unlitShader = new Shader("../../../Shaders/unlit.vert",
+            "../../../Shaders/unlit.frag");
 
         modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
         viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
         projectionLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "projection");
+        GL.Uniform1(GL.GetUniformLocation(shaderProgram.shaderHandle, "texture0"), 0);
+
+        lightDirLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "lightDir");
+        lightColorLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "lightColor");
+        ambientColorLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "ambientColor");
+        viewPosLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "viewPos");
 
         skyboxSamplerLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "skybox");
         skyboxViewLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "view");
         skyboxProjectionLocation = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "projection");
+        skyboxBrightnessFactorLoc = GL.GetUniformLocation(skyboxShaderProgram.shaderHandle, "brightnessFactor");
         GL.Uniform1(skyboxSamplerLocation, 0);
 
-        GL.Enable(EnableCap.DepthTest);
+        unlitModelLoc = GL.GetUniformLocation(unlitShader.shaderHandle, "model");
+        unlitViewLoc = GL.GetUniformLocation(unlitShader.shaderHandle, "view");
+        unlitProjLoc = GL.GetUniformLocation(unlitShader.shaderHandle, "projection");
+        unlitColorLoc = GL.GetUniformLocation(unlitShader.shaderHandle, "objectColor");
 
         camera = new Camera(width, height, new Vector3(-2.0f, 1.0f, -2.0f));
         CursorState = CursorState.Grabbed;
     }
+
+    private void SetupSphereBuffers()
+    {
+        sphereVAO = GL.GenVertexArray();
+        sphereVBO = GL.GenBuffer();
+        sphereEBO = GL.GenBuffer();
+
+        GL.BindVertexArray(sphereVAO);
+
+        GL.BindBuffer(BufferTarget.ArrayBuffer, sphereVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, sphereVertices.Count
+            * Vector3.SizeInBytes, sphereVertices.ToArray(),
+            BufferUsageHint.StaticDraw);
+
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, sphereEBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer, sphereIndices.Count
+            * sizeof(uint), sphereIndices.ToArray(),
+            BufferUsageHint.StaticDraw);
+
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float,
+            false, Vector3.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(0);
+
+        GL.BindVertexArray(0);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+    }
+
 
     private void PrepareHomeData()
     {
@@ -201,18 +295,35 @@ internal class Game: GameWindow
             20, 21, 22,
             22, 20, 23
 };
+
+        homeNormals = new List<Vector3>()
+        {
+            // Передняя Z+ (0-3)
+            Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ, Vector3.UnitZ,
+            // Правая X+ (4-7)
+            Vector3.UnitX, Vector3.UnitX, Vector3.UnitX, Vector3.UnitX,
+            // Задняя Z- (8-11)
+           -Vector3.UnitZ,-Vector3.UnitZ,-Vector3.UnitZ,-Vector3.UnitZ,
+            // Левая X- (12-15)
+           -Vector3.UnitX,-Vector3.UnitX,-Vector3.UnitX,-Vector3.UnitX,
+            // Верхняя Y+ (16-19)
+            Vector3.UnitY, Vector3.UnitY, Vector3.UnitY, Vector3.UnitY,
+            // Нижняя Y- (20-23)
+           -Vector3.UnitY,-Vector3.UnitY,-Vector3.UnitY,-Vector3.UnitY,
+        };
     }
+
 
     private void PrepareGroundData()
     {
-        float groundSize = 50.0f; // Сделаем землю поменьше для начала
-        float textureRepeat = 25.0f; // Повторение текстуры
+        float groundSize = 50.0f;
+        float textureRepeat = 25.0f;
 
         groundVertices = new float[]{
-            groundSize,  0.0f,  groundSize, textureRepeat, 0.0f,
-            -groundSize, 0.0f,  groundSize, 0.0f, 0.0f,
-            -groundSize, 0.0f, -groundSize, 0.0f, textureRepeat,
-            groundSize,  0.0f, -groundSize, textureRepeat, textureRepeat
+            groundSize,  0.0f,  groundSize, 0.0f, 1.0f, 0.0f, textureRepeat, 0.0f,
+            -groundSize, 0.0f,  groundSize, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+            -groundSize, 0.0f, -groundSize, 0.0f, 1.0f, 0.0f, 0.0f, textureRepeat,
+            groundSize,  0.0f, -groundSize, 0.0f, 1.0f, 0.0f, textureRepeat, textureRepeat
         };
 
         groundIndices = new uint[]
@@ -306,28 +417,39 @@ internal class Game: GameWindow
         homeVAO = GL.GenVertexArray();
         homeVBO = GL.GenBuffer();
         homeTextureVBO = GL.GenBuffer();
+        homeNormalsVBO = GL.GenBuffer();
         homeEBO = GL.GenBuffer();
 
         GL.BindVertexArray(homeVAO);
 
+        //VBO Vertices
         GL.BindBuffer(BufferTarget.ArrayBuffer, homeVBO);
         GL.BufferData(BufferTarget.ArrayBuffer,
             homeVertices.Count * Vector3.SizeInBytes,
             homeVertices.ToArray(), BufferUsageHint.StaticDraw);
-
-        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vector3.SizeInBytes, 0);
-
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float,
+            false, Vector3.SizeInBytes, 0);
         GL.EnableVertexAttribArray(0);
 
-        //Create Bind_Texture
+        //VBO Texture 
         GL.BindBuffer(BufferTarget.ArrayBuffer, homeTextureVBO);
         GL.BufferData(BufferTarget.ArrayBuffer,
             homeTexCoords.Count * Vector2.SizeInBytes,
             homeTexCoords.ToArray(), BufferUsageHint.StaticDraw);
-
-        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, Vector2.SizeInBytes, 0);
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float,
+            false, Vector2.SizeInBytes, 0);
         GL.EnableVertexAttribArray(1);
 
+        //VBO Normals
+        GL.BindBuffer(BufferTarget.ArrayBuffer, homeNormalsVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer,
+            homeNormals.Count * Vector3.SizeInBytes,
+            homeNormals.ToArray(), BufferUsageHint.StaticDraw);
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float,
+            false, Vector3.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(2);
+
+        //EBO Indices
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, homeEBO);
         GL.BufferData(BufferTarget.ElementArrayBuffer,
             homeIndices.Length * sizeof(uint),
@@ -351,12 +473,15 @@ internal class Game: GameWindow
             groundVertices.Length * sizeof(float),
             groundVertices, BufferUsageHint.StaticDraw);
 
-        int stride = 5 * sizeof(float);
+        int stride = 8 * sizeof(float);
 
         GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, 0);
         GL.EnableVertexAttribArray(0);
 
-        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float)); // Смещение 3 float'а от начала
+        GL.EnableVertexAttribArray(2);
+
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
         GL.EnableVertexAttribArray(1);
 
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, groundEBO);
@@ -431,6 +556,12 @@ internal class Game: GameWindow
     {
         base.OnUnload();
 
+        GL.DeleteBuffer(homeNormalsVBO);
+
+        GL.DeleteBuffer(sphereVBO);
+        GL.DeleteBuffer(sphereEBO);
+        GL.DeleteVertexArray(sphereVAO);
+
         GL.DeleteVertexArray(homeVAO);
         GL.DeleteBuffer(homeVBO);
         GL.DeleteBuffer(homeEBO);
@@ -448,6 +579,7 @@ internal class Game: GameWindow
 
         shaderProgram.DeleteShader();
         skyboxShaderProgram.DeleteShader();
+        unlitShader.DeleteShader();
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
@@ -459,38 +591,69 @@ internal class Game: GameWindow
         Matrix4 view = camera.GetViewMatrix();
         Matrix4 projection = camera.GetProjectionMatrix();
 
+        unlitShader.UseShader();
+
+        GL.UniformMatrix4(unlitViewLoc, false, ref view);
+        GL.UniformMatrix4(unlitProjLoc, false, ref projection);
+        GL.BindVertexArray(sphereVAO);
+
+        //Sun
+        if (sunPos.Y >= -1.0f) // Рисуем, если чуть выше или ниже горизонта (чтобы не исчезало резко)
+        {
+            Matrix4 sunModel = Matrix4.CreateScale(2.0f) * Matrix4.CreateTranslation(sunPos); // Сделаем побольше и переместим
+            GL.UniformMatrix4(unlitModelLoc, false, ref sunModel);
+            GL.Uniform3(unlitColorLoc, sunColorDay * 1.5f); // Ярче, чтобы было видно на фоне неба
+            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
+        }
+
+        //Moon
+        if (moonPos.Y >= -1.0f) // Рисуем, если чуть выше или ниже горизонта
+        {
+            Matrix4 moonModel = Matrix4.CreateScale(1.5f) * Matrix4.CreateTranslation(moonPos); // Чуть меньше солнца
+            GL.UniformMatrix4(unlitModelLoc, false, ref moonModel);
+            GL.Uniform3(unlitColorLoc, moonColorNight * 1.5f); // Ярче
+            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
+        }
+
+        GL.BindVertexArray(0);
+
+
         shaderProgram.UseShader();
 
         GL.UniformMatrix4(viewLocation, false, ref view);
         GL.UniformMatrix4(projectionLocation, false, ref projection);
 
-        GL.BindVertexArray(groundVAO);
+        GL.Uniform3(lightDirLoc, ref currentLightDir);
+        GL.Uniform3(lightColorLoc, ref currentLightColor);
+        GL.Uniform3(ambientColorLoc, ref currentAmbientColor);
+        GL.Uniform3(viewPosLoc, camera.Position);
+
+        yRot += (float)args.Time * 0.1f;
+
+        Matrix4 homeRotation = Matrix4.CreateRotationY(yRot);
+        Matrix4 homeTranslation = Matrix4.CreateTranslation(0f, 0.5f, 0f);
+        Matrix4 homeModel = homeRotation * homeTranslation;
+        GL.UniformMatrix4(modelLocation, false, ref homeModel);
+
         GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, groundTextureID);
+        GL.BindTexture(TextureTarget.Texture2D, homeTextureID);
+        GL.BindVertexArray(homeVAO);
+        GL.DrawElements(PrimitiveType.Triangles, homeIndices.Length, DrawElementsType.UnsignedInt, 0);
+
+        GL.BindVertexArray(0);
+
 
         Matrix4 groundModel = Matrix4.Identity;
         GL.UniformMatrix4(modelLocation, false, ref groundModel);
+
+        GL.BindTexture(TextureTarget.Texture2D, groundTextureID);
+        GL.BindVertexArray(groundVAO);
 
         GL.DrawElements(PrimitiveType.Triangles,
             groundIndices.Length,
             DrawElementsType.UnsignedInt, 0);
 
-        GL.BindVertexArray(homeVAO);
-
-        GL.BindTexture(TextureTarget.Texture2D, homeTextureID);
-
-        yRot += (float)args.Time * 0.5f;
-        Matrix4 homeModel = Matrix4.CreateRotationY(yRot);
-        Matrix4 homeTranslation = Matrix4.CreateTranslation(0f, 0.50001f, 0f);
-        homeModel *= homeTranslation;
-
-        GL.UniformMatrix4(modelLocation, false, ref homeModel);
-
-        GL.DrawElements(PrimitiveType.Triangles, homeIndices.Length,
-            DrawElementsType.UnsignedInt, 0);
-
         GL.BindVertexArray(0);
-        GL.BindTexture(TextureTarget.Texture2D, 0);
 
         //Skybox
         GL.DepthFunc(DepthFunction.Lequal);
@@ -499,6 +662,7 @@ internal class Game: GameWindow
         Matrix4 skyboxView = new Matrix4(new Matrix3(view));
         GL.UniformMatrix4(skyboxViewLocation, false, ref skyboxView);
         GL.UniformMatrix4(skyboxProjectionLocation, false, ref projection);
+        GL.Uniform1(skyboxBrightnessFactorLoc, sunAltitudeFactor);
 
         GL.BindVertexArray(skyboxVAO);
         GL.ActiveTexture(TextureUnit.Texture0);
@@ -519,9 +683,14 @@ internal class Game: GameWindow
     {
         if (this.IsFocused && mouse.IsButtonDown(MouseButton.Left) && !cursorGrabbed)
         {
-            this.MousePosition = new Vector2(lastPos.X, lastPos.Y);
+            this.MousePosition = lastPos;
             this.CursorState = CursorState.Grabbed;
             cursorGrabbed = true;
+
+            if (camera != null)
+            {
+                camera.firstMove = true;
+            }
         }
     }
 
@@ -550,38 +719,178 @@ internal class Game: GameWindow
 
     protected override void OnUpdateFrame(FrameEventArgs args)
     {
-        if (KeyboardState.IsKeyDown(Keys.Escape))
-        {
-            Close();
-        }
+        if (!IsFocused) return;
 
         MouseState mouse = MouseState;
         KeyboardState input = KeyboardState;
-
         OnMouseButtonDown(mouse, args);
         OnFullScreenMode(input, mouse, args);
+        if (input.IsKeyDown(Keys.Escape)){ Close(); return; }
 
-        base.OnUpdateFrame(args);
+
+
+        timeOfDay += (float)args.Time * cycleSpeed;
+
+        if (timeOfDay >= 2.0f * MathF.PI) timeOfDay -= 2.0f * MathF.PI;
+
+        sunPos = new Vector3(
+            orbitRadius * MathF.Cos(timeOfDay),
+            orbitRadius * MathF.Sin(timeOfDay), // Y - высота над горизонтом
+            0.0f // Пусть движется в плоскости X-Y для простоты
+        );
+
+        moonPos = new Vector3(
+            orbitRadius * MathF.Cos(timeOfDay + MathF.PI),
+            orbitRadius * MathF.Sin(timeOfDay + MathF.PI),
+            0.0f
+        );
+
+        sunAltitudeFactor = Math.Clamp(sunPos.Y / orbitRadius, 0.0f, 1.0f);
+        Vector3 currentSkyColor;
+
+        float dayLerpFactor = Math.Clamp(sunAltitudeFactor, 0.0f, 1.0f);
+        float horizonProximity = Math.Abs(MathF.Cos(timeOfDay));
+
+        float transitionMixFactor = Math.Clamp(1.0f - horizonProximity
+            / (1.0f - HorizonTransitionThreshold), 0.0f, 1.0f);
+        transitionMixFactor = transitionMixFactor * transitionMixFactor
+            * (3.0f - 2.0f * transitionMixFactor);
+
+        Vector3 activeLightPos;
+        float dayIntensity;
+
+        if (sunPos.Y >= 0) // День
+        {
+            activeLightPos = sunPos;
+            currentLightDir = Vector3.Normalize(-activeLightPos);
+
+            // Определяем цвет (восход или закат)
+            Vector3 transitionSunColor = (timeOfDay < MathF.PI) ?
+                sunColorSunrise : sunColorSunset;
+            Vector3 transitionAmbientColor = (timeOfDay < MathF.PI) ?
+                ambientSunrise : ambientSunset;
+            Vector3 transitionSkyColor = (timeOfDay < MathF.PI) ?
+                skyColorSunrise : skyColorSunset;
+
+            // Смешиваем дневные цвета и цвета восхода/заката
+            currentLightColor = Vector3.Lerp(sunColorDay,
+                transitionSunColor, transitionMixFactor);
+            currentAmbientColor = Vector3.Lerp(ambientDay,
+                transitionAmbientColor, transitionMixFactor);
+            currentSkyColor = Vector3.Lerp(skyColorDay,
+                transitionSkyColor, transitionMixFactor);
+
+            dayIntensity = MathF.Sin(MathHelper.DegreesToRadians(
+                dayLerpFactor * 180.0f));
+            currentLightColor *= dayIntensity * DayLightBoost;
+        }
+        else
+        {
+            activeLightPos = moonPos;
+            currentLightDir = Vector3.Normalize(-activeLightPos);
+
+            currentLightColor = moonColorNight * MoonLightIntensity;
+
+            Vector3 transitionAmbientColor = (timeOfDay > MathF.PI) ?
+                ambientSunset : ambientSunrise;
+            Vector3 transitionSkyColor = (timeOfDay > MathF.PI) ?
+                skyColorSunset : skyColorSunrise;
+
+            currentAmbientColor = Vector3.Lerp(ambientNight,
+                transitionAmbientColor, transitionMixFactor);
+            currentSkyColor = Vector3.Lerp(skyColorNight,
+                transitionSkyColor, transitionMixFactor);
+        }
+
+        GL.ClearColor(currentSkyColor.X, currentSkyColor.Y, currentSkyColor.Z, 1.0f);
+
         if (cursorGrabbed)
         {
-            camera.Update(input, mouse, args);
+            camera.Update(input, mouse, args, out Vector2 newLastPos);
+            lastPos = newLastPos;
         }
+        else if (!cursorGrabbed) { lastPos = new Vector2(mouse.X, mouse.Y); }
+
+        base.OnUpdateFrame(args);
     }
 
     protected override void OnResize(ResizeEventArgs e)
     {
         base.OnResize(e);
         GL.Viewport(0, 0, e.Width, e.Height);
-        //if (camera != null)
-        //{
-        //    camera.UpdateScreenSize(e.Width, e.Height);
-        //}
+        if (camera != null)
+        {
+            camera.UpdateScreenSize(e.Width, e.Height);
+        }
         this.width = e.Width;
         this.height = e.Height;
     }
 };
 
+class GeometryFactory
+{
+    public static (List<Vector3> vertices, List<Vector2> texCoords, List<uint> indices) CreateSphereVertices(float radius, int sectorCount, int stackCount)
+    {
+        var vertices = new List<Vector3>();
+        var texCoords = new List<Vector2>();
+        var indices = new List<uint>();
 
+        float x, y, z, xy;                              // vertex position
+        float s, t;                                     // vertex texCoord
+
+        float sectorStep = 2 * MathF.PI / sectorCount;
+        float stackStep = MathF.PI / stackCount;
+        float sectorAngle, stackAngle;
+
+        for (int i = 0; i <= stackCount; ++i)
+        {
+            stackAngle = MathF.PI / 2 - i * stackStep;
+            xy = radius * MathF.Cos(stackAngle);
+            z = radius * MathF.Sin(stackAngle);         
+
+            for (int j = 0; j <= sectorCount; ++j)
+            {
+                sectorAngle = j * sectorStep;           // starting from 0 to 2pi
+
+                // vertex position (x, y, z)
+                x = xy * MathF.Cos(sectorAngle);        // r * cos(u) * cos(v)
+                y = xy * MathF.Sin(sectorAngle);        // r * cos(u) * sin(v)
+                vertices.Add(new Vector3(x, y, z));
+
+                // vertex tex coord (s, t) range between [0, 1]
+                s = (float)j / sectorCount;
+                t = (float)i / stackCount;
+                texCoords.Add(new Vector2(s, t));
+            }
+        }
+
+        // generate CCW index list of sphere triangles
+        uint k1, k2;
+        for (int i = 0; i < stackCount; ++i)
+        {
+            k1 = (uint)(i * (sectorCount + 1)); // beginning of current stack
+            k2 = (uint)(k1 + sectorCount + 1);  // beginning of next stack
+
+            for (int j = 0; j < sectorCount; ++j, ++k1, ++k2)
+            {
+                if (i != 0)
+                {
+                    indices.Add(k1);
+                    indices.Add(k2);
+                    indices.Add(k1 + 1);
+                }
+
+                if (i != (stackCount - 1))
+                {
+                    indices.Add(k1 + 1);
+                    indices.Add(k2);
+                    indices.Add(k2 + 1);
+                }
+            }
+        }
+        return (vertices, texCoords, indices);
+    }
+}
 
 public class Shader
 {
