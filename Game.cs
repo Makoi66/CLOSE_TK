@@ -20,13 +20,21 @@ internal class Game: GameWindow
     public Vector2 lastPos;
 
     Camera camera;
-    float yRot = 0f;
 
     private int homeVAO, homeVBO, homeEBO, homeTextureVBO, homeTextureID;
     private int homeNormalsVBO;
     private List<Vector3> homeVertices;
     private List<Vector2> homeTexCoords;
     private uint[] homeIndices;
+    private int[] homeFaceTextureIDs = new int[10];
+    private List<string> faceTexturePaths;
+
+    private int roofVAO, roofVBO, roofNormalsVBO, roofTexCoordsVBO, roofEBO;
+    private List<Vector3> roofVertices;
+    private List<Vector3> roofNormals;
+    private List<Vector2> roofTexCoords;
+    private List<uint> roofIndices;
+    private int roofIndexCount;
 
     private int groundVAO, groundVBO, groundEBO, groundTextureID;
     private float[] groundVertices;
@@ -70,10 +78,10 @@ internal class Game: GameWindow
     private readonly Vector3 sunColorSunset = new Vector3(1.0f, 0.75f, 0.35f); // Красно-розовый
     private readonly Vector3 moonColorNight = new Vector3(0.6f, 0.6f, 0.8f); // Тусклый голубоватый
 
-    private readonly Vector3 ambientDay = new Vector3(0.55f, 0.55f, 0.65f); // Светло-голубой эмбиент
-    private readonly Vector3 ambientSunrise = new Vector3(0.4f, 0.3f, 0.3f); // Теплый красный эмбиент
-    private readonly Vector3 ambientSunset = new Vector3(0.45f, 0.25f, 0.3f); // Теплый красноватый эмбиент
-    private readonly Vector3 ambientNight = new Vector3(0.15f, 0.15f, 0.25f); // Темно-синий эмбиент
+    private readonly Vector3 ambientDay = new Vector3(0.3f, 0.3f, 0.35f); // Светло-голубой эмбиент
+    private readonly Vector3 ambientSunrise = new Vector3(0.25f, 0.15f, 0.15f); // Теплый красный эмбиент
+    private readonly Vector3 ambientSunset = new Vector3(0.3f, 0.15f, 0.18f); // Теплый красноватый эмбиент
+    private readonly Vector3 ambientNight = new Vector3(0.08f, 0.08f, 0.15f); // Темно-синий эмбиент
 
     private readonly Vector3 skyColorDay = new Vector3(0.5f, 0.7f, 1.0f); // Цвет неба днем
     private readonly Vector3 skyColorSunrise = new Vector3(0.9f, 0.55f, 0.45f); // Оранжевое небо
@@ -89,6 +97,22 @@ internal class Game: GameWindow
 
     //Данные нормалей для куба
     private List<Vector3> homeNormals;
+
+
+    private Vector3 activeLightPos;
+    //Тени
+    private int depthMapFBO;
+    private int depthMapTexture;
+    private Shader shadowShader;
+    private Matrix4 lightSpaceMatrix;
+    private int shadowMapWidth = 2048, shadowMapHeight = 2048;
+
+    //Новые локации uniform'ов в основном шейдере
+    private int lightSpaceMatrixLoc;
+    private int shadowMapSamplerLoc;
+    //Локация для шейдера теней
+    private int shadowLightSpaceMatrixLoc;
+    private int shadowModelLoc;
 
 
 
@@ -116,13 +140,28 @@ internal class Game: GameWindow
         PrepareHomeData();
         SetupHomeBuffers();
 
+        PrepareRoofData();
+        SetupRoofBuffers();
+
         PrepareGroundData();
         SetupGroundBuffers();
 
         PrepareSkyboxData();
         SetupSkyboxBuffers();
 
-        homeTextureID = LoadTexture("../../../Textures/pineapples.jpg");
+        homeFaceTextureIDs = LoadHomeTextures(new List<string>
+        {
+            "../../../Textures/Home/wall_front.jpg",  // 0: Front Face
+            "../../../Textures/Home/wall_back.jpg",   // 1: Back Face
+            "../../../Textures/Home/wall_left.jpg",   // 2: Left Face
+            "../../../Textures/Home/wall_right.jpg",  // 3: Right Face
+            "../../../Textures/Home/wall_top.jpg",    // 4: Top Face (основание крыши)
+            "../../../Textures/Home/wall_bottom.jpg", // 5: Bottom Face
+            "../../../Textures/Home/roof_front.jpg",  // 6: Roof Front
+            "../../../Textures/Home/roof_back.jpg",   // 7: Roof Back
+            "../../../Textures/Home/roof_left.jpg",   // 8: Roof Left
+            "../../../Textures/Home/roof_right.jpg"   // 9: Roof Right
+        });
         groundTextureID = LoadTexture("../../../Textures/ground.jpg");
         skyboxTextureID = LoadCubemap(new List<string>
         {
@@ -141,6 +180,70 @@ internal class Game: GameWindow
             "../../../Shaders/skybox.frag");
         unlitShader = new Shader("../../../Shaders/unlit.vert",
             "../../../Shaders/unlit.frag");
+        shadowShader = new Shader("../../../Shaders/shadow.vert",
+            "../../../Shaders/shadow.frag");
+
+        // Получаем локации для shadowShader
+        shadowShader.UseShader();
+        shadowLightSpaceMatrixLoc = GL.GetUniformLocation(shadowShader.shaderHandle,
+            "lightSpaceMatrix");
+        shadowModelLoc = GL.GetUniformLocation(shadowShader.shaderHandle, "model");
+
+        // Создаем Framebuffer Object (FBO)
+        depthMapFBO = GL.GenFramebuffer();
+
+        // Создаем текстуру для карты глубины
+        depthMapTexture = GL.GenTexture();
+        GL.BindTexture(TextureTarget.Texture2D, depthMapTexture);
+
+        // Создаем пустое изображение нужного размера с форматом глубины
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.DepthComponent,
+                      shadowMapWidth, shadowMapHeight, 0, PixelFormat.DepthComponent,
+                      PixelType.Float, IntPtr.Zero);
+
+        // Устанавливаем параметры фильтрации (обычно Nearest для карт теней)
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
+            (int)TextureMinFilter.Nearest);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
+            (int)TextureMinFilter.Nearest);
+
+        // Устанавливаем параметры обертывания (ClampToBorder лучше всего, чтобы за пределами карты не было теней)
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, 
+            (int)TextureWrapMode.ClampToBorder);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT,
+            (int)TextureWrapMode.ClampToBorder);
+
+        // Устанавливаем цвет границы (белый = нет тени за пределами)
+        float[] borderColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBorderColor,
+            borderColor);
+
+        // Прикрепляем текстуру глубины к FBO
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, depthMapFBO);
+        GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,
+            FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, depthMapTexture, 0);
+
+        // Говорим OpenGL, что мы не будем рендерить в цветовой буфер для этого FBO
+        GL.DrawBuffer(DrawBufferMode.None);
+        GL.ReadBuffer(ReadBufferMode.None);
+
+        // Проверяем, готов ли FBO
+        var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+        if (fboStatus != FramebufferErrorCode.FramebufferComplete)
+        {
+            Console.WriteLine($"ERROR::FRAMEBUFFER:: Framebuffer is not complete! Status: {fboStatus}");
+        }
+        // Отвязываем FBO, чтобы вернуться к рендеру в окно по умолчанию
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+        // Получаем локации для теней в основном шейдере
+        shaderProgram.UseShader();
+        lightSpaceMatrixLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "lightSpaceMatrix");
+        shadowMapSamplerLoc = GL.GetUniformLocation(shaderProgram.shaderHandle, "shadowMap");
+        
+        // Указываем, что карта теней будет в текстурном юните 1 (0 уже занят основной текстурой)
+        GL.Uniform1(shadowMapSamplerLoc, 1);
+
 
         modelLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "model");
         viewLocation = GL.GetUniformLocation(shaderProgram.shaderHandle, "view");
@@ -166,6 +269,7 @@ internal class Game: GameWindow
         camera = new Camera(width, height, new Vector3(-2.0f, 1.0f, -2.0f));
         CursorState = CursorState.Grabbed;
     }
+
 
     private void SetupSphereBuffers()
     {
@@ -193,7 +297,6 @@ internal class Game: GameWindow
         GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
         GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
     }
-
 
     private void PrepareHomeData()
     {
@@ -313,6 +416,130 @@ internal class Game: GameWindow
         };
     }
 
+    private void AddRoofQuad(Vector3 v1, Vector3 v2, Vector3 v3, Vector3 v4, Vector3 normal, float layer, ref uint vertexOffset)
+    {
+        roofVertices.Add(v1); roofVertices.Add(v2); roofVertices.Add(v3); roofVertices.Add(v4);
+        roofNormals.Add(normal); roofNormals.Add(normal); roofNormals.Add(normal); roofNormals.Add(normal);
+        // UV для ската крыши (могут потребовать настройки)
+        roofTexCoords.Add(new Vector2(0, 0)); roofTexCoords.Add(new Vector2(1, 0)); roofTexCoords.Add(new Vector2(1, 1)); roofTexCoords.Add(new Vector2(0, 1));
+        // Не используем layer здесь, т.к. нет Texture Array
+        // homeAllTexLayers.Add(layer); homeAllTexLayers.Add(layer); homeAllTexLayers.Add(layer); homeAllTexLayers.Add(layer);
+
+        roofIndices.Add(vertexOffset + 0); roofIndices.Add(vertexOffset + 1); roofIndices.Add(vertexOffset + 2);
+        roofIndices.Add(vertexOffset + 2); roofIndices.Add(vertexOffset + 3); roofIndices.Add(vertexOffset + 0);
+        vertexOffset += 4;
+    }
+
+    private void AddRoofTriangle(Vector3 v1, Vector3 v2, Vector3 v3, Vector2 uv1, Vector2 uv2, Vector2 uv3, float layer, ref uint vertexOffset)
+    {
+        Vector3 edge1 = v2 - v1;
+        Vector3 edge2 = v3 - v1;
+        Vector3 normal = Vector3.Normalize(Vector3.Cross(edge1, edge2));
+        // Убедимся, что нормаль торца направлена наружу (например, для левого торца X должен быть < 0)
+        if (Math.Abs(v1.X - v2.X) < 0.01f && normal.X > 0 && v1.X < 0) normal *= -1; // Пример для левого торца
+        if (Math.Abs(v1.X - v2.X) < 0.01f && normal.X < 0 && v1.X > 0) normal *= -1; // Пример для правого торца
+
+
+        roofVertices.Add(v1); roofVertices.Add(v2); roofVertices.Add(v3);
+        roofNormals.Add(normal); roofNormals.Add(normal); roofNormals.Add(normal);
+        roofTexCoords.Add(uv1); roofTexCoords.Add(uv2); roofTexCoords.Add(uv3);
+        // homeAllTexLayers.Add(layer); homeAllTexLayers.Add(layer); homeAllTexLayers.Add(layer);
+
+        roofIndices.Add(vertexOffset + 0); roofIndices.Add(vertexOffset + 1); roofIndices.Add(vertexOffset + 2);
+        vertexOffset += 3;
+    }
+
+    private void PrepareRoofData()
+    {
+        roofVertices = new List<Vector3>();
+        roofNormals = new List<Vector3>();
+        roofTexCoords = new List<Vector2>();
+        roofIndices = new List<uint>();
+
+        float roofHeight = 0.5f;     // Высота конька над основанием крыши
+        float overhang = 0.15f;     // Насколько крыша выступает за стены
+        float baseY = 0.5f;         // Y-координата основания крыши (верх куба)
+        float halfSize = 0.5f;      // Половина размера куба
+
+        // Вершины конька крыши
+        Vector3 ridgeLeft = new Vector3(-(halfSize + overhang), baseY + roofHeight, 0.0f);
+        Vector3 ridgeRight = new Vector3((halfSize + overhang), baseY + roofHeight, 0.0f);
+
+        // Вершины основания крыши (с навесом)
+        Vector3 baseFrontLeft = new Vector3(-(halfSize + overhang), baseY, (halfSize + overhang));
+        Vector3 baseFrontRight = new Vector3((halfSize + overhang), baseY, (halfSize + overhang));
+        Vector3 baseBackLeft = new Vector3(-(halfSize + overhang), baseY, -(halfSize + overhang));
+        Vector3 baseBackRight = new Vector3((halfSize + overhang), baseY, -(halfSize + overhang));
+
+        // --- Добавляем 4 грани крыши (прямоугольники) ---
+        uint vertexOffset = 0;
+
+        // Грань 1: Передний скат (+Z направление нормали примерно)
+        Vector3 normalFront = Vector3.Normalize(new Vector3(0, halfSize + overhang, roofHeight)); // Нормаль ската
+        AddRoofQuad(baseFrontLeft, baseFrontRight, ridgeRight, ridgeLeft, normalFront, 6.0f, ref vertexOffset); // Текстура 6
+
+        // Грань 2: Задний скат (-Z направление нормали примерно)
+        Vector3 normalBack = Vector3.Normalize(new Vector3(0, halfSize + overhang, -roofHeight));
+        AddRoofQuad(baseBackRight, baseBackLeft, ridgeLeft, ridgeRight, normalBack, 7.0f, ref vertexOffset); // Текстура 7
+
+        // --- Добавляем 2 торцевые грани крыши (треугольники) ---
+
+        // Торец 3: Левый (-X направление)
+        AddRoofTriangle(baseBackLeft, baseFrontLeft, ridgeLeft, new Vector2(0, 0), new Vector2(1, 0), new Vector2(0.5f, 1), 8.0f, ref vertexOffset); // Текстура 8
+
+        // Торец 4: Правый (+X направление)
+        AddRoofTriangle(baseFrontRight, baseBackRight, ridgeRight, new Vector2(0, 0), new Vector2(1, 0), new Vector2(0.5f, 1), 9.0f, ref vertexOffset); // Текстура 9
+
+        roofIndexCount = roofIndices.Count; // Обновляем количество индексов (4 * 6 = 24)
+    }
+
+    private void AddRoofTriangle(Vector3 v1, Vector3 v2, Vector3 v3, Vector2 uv1, Vector2 uv2, Vector2 uv3)
+    {
+        Vector3 edge1 = v2 - v1;
+        Vector3 edge2 = v3 - v1;
+        Vector3 normal = Vector3.Normalize(Vector3.Cross(edge1, edge2));
+
+        roofVertices.Add(v1); roofVertices.Add(v2); roofVertices.Add(v3);
+        roofNormals.Add(normal); roofNormals.Add(normal); roofNormals.Add(normal);
+        roofTexCoords.Add(uv1); roofTexCoords.Add(uv2); roofTexCoords.Add(uv3);
+    }
+
+    private void SetupRoofBuffers()
+    {
+        roofVAO = GL.GenVertexArray();
+        roofVBO = GL.GenBuffer();
+        roofNormalsVBO = GL.GenBuffer();
+        roofTexCoordsVBO = GL.GenBuffer();
+        roofEBO = GL.GenBuffer();
+
+        GL.BindVertexArray(roofVAO);
+
+        // VBO Вершины (location 0)
+        GL.BindBuffer(BufferTarget.ArrayBuffer, roofVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, roofVertices.Count * Vector3.SizeInBytes, roofVertices.ToArray(), BufferUsageHint.StaticDraw);
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, Vector3.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(0);
+
+        // VBO Текстурные координаты (location 1)
+        GL.BindBuffer(BufferTarget.ArrayBuffer, roofTexCoordsVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, roofTexCoords.Count * Vector2.SizeInBytes, roofTexCoords.ToArray(), BufferUsageHint.StaticDraw);
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, Vector2.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(1);
+
+        // VBO Нормали (location 2)
+        GL.BindBuffer(BufferTarget.ArrayBuffer, roofNormalsVBO);
+        GL.BufferData(BufferTarget.ArrayBuffer, roofNormals.Count * Vector3.SizeInBytes, roofNormals.ToArray(), BufferUsageHint.StaticDraw);
+        GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, Vector3.SizeInBytes, 0);
+        GL.EnableVertexAttribArray(2);
+
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, roofEBO);
+        GL.BufferData(BufferTarget.ElementArrayBuffer, roofIndices.Count
+            * sizeof(uint), roofIndices.ToArray(), BufferUsageHint.StaticDraw);
+
+        GL.BindVertexArray(0);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+    }
 
     private void PrepareGroundData()
     {
@@ -552,6 +779,74 @@ internal class Game: GameWindow
         return textureID;
     }
 
+    private int[] LoadHomeTextures(List<string> paths)
+    {
+        int[] textureIDs = new int[paths.Count];
+        Console.WriteLine($"Loading {paths.Count} individual home textures...");
+
+        StbImage.stbi_set_flip_vertically_on_load(1);
+
+        for (int i = 0; i < paths.Count; i++)
+        {
+            string path = paths[i];
+            int textureHandle = 0;
+
+            textureHandle = GL.GenTexture();
+            GL.ActiveTexture(TextureUnit.Texture0); 
+            GL.BindTexture(TextureTarget.Texture2D, textureHandle);
+
+            // Проверка пути
+            string absolutePath = Path.GetFullPath(path);
+            Console.Write($" -> Loading texture {i}: {absolutePath}... ");
+
+            // Загрузка изображения
+            using (Stream stream = File.OpenRead(absolutePath))
+            {
+                ImageResult image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
+                // Загружаем данные в GPU
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                    image.Width, image.Height, 0, PixelFormat.Rgba,
+                    PixelType.UnsignedByte, image.Data);
+
+                // Генерируем мипмапы
+                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+
+                // Устанавливаем параметры (можно вынести за цикл, если они одинаковые)
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+
+                textureIDs[i] = textureHandle; // Сохраняем успешный ID
+                Console.WriteLine($"OK (ID: {textureHandle})");
+            }
+            GL.BindTexture(TextureTarget.Texture2D, 0); // Отвязываем текстуру после каждой попытки
+        }
+
+        // StbImage.stbi_set_flip_vertically_on_load(1); // Уже установлено в начале
+
+        Console.WriteLine("Finished loading home textures.");
+        return textureIDs;
+    }
+
+    private void DrawCubeFace(int indexOffset, int indexCount, int textureId)
+    {
+        if (textureId <= 0) return; // Не рисуем, если текстура не загрузилась
+        GL.BindTexture(TextureTarget.Texture2D, textureId);
+        // Рисуем часть индексов из EBO куба
+        GL.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, indexOffset * sizeof(uint));
+    }
+
+    private void DrawRoofFace(int vertexOffset, int vertexCount, int textureId)
+    {
+        if (textureId <= 0) return;
+        GL.BindTexture(TextureTarget.Texture2D, textureId);
+        // Рисуем вершины крыши напрямую
+        GL.DrawArrays(PrimitiveType.Triangles, vertexOffset, vertexCount);
+    }
+
+
+
     protected override void OnUnload()
     {
         base.OnUnload();
@@ -577,105 +872,172 @@ internal class Game: GameWindow
         GL.DeleteBuffer(skyboxVBO);
         GL.DeleteTexture(skyboxTextureID);
 
+        GL.DeleteFramebuffer(depthMapFBO);
+        GL.DeleteTexture(depthMapTexture);
+
+        GL.DeleteVertexArray(roofVAO);
+        GL.DeleteBuffer(roofVBO);
+        GL.DeleteBuffer(roofNormalsVBO);
+        GL.DeleteBuffer(roofTexCoordsVBO);
+        GL.DeleteBuffer(roofEBO);
+
         shaderProgram.DeleteShader();
         skyboxShaderProgram.DeleteShader();
         unlitShader.DeleteShader();
+        shadowShader.DeleteShader();
+    }
+
+    private void DrawRoofFaceByIndex(int indexOffset, int indexCount, int textureId)
+    {
+        if (textureId <= 0) return;
+        GL.BindTexture(TextureTarget.Texture2D, textureId);
+        // Рисуем часть индексов из EBO крыши
+        GL.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, indexOffset * sizeof(uint));
     }
 
     protected override void OnRenderFrame(FrameEventArgs args)
     {
         base.OnRenderFrame(args);
 
+        // --- 1. РЕНДЕР КАРТЫ ТЕНЕЙ (Depth Pass) ---
+        // Рассчитываем матрицы вида и проекции для источника света
+        float near_plane = 1.0f, far_plane = orbitRadius * 4.0f; // Дальность видимости для тени
+                                                                 // Ортографическая проекция для направленного света
+        Matrix4 lightProjection = Matrix4.CreateOrthographicOffCenter(-25.0f, 25.0f, -25.0f, 25.0f, near_plane, far_plane);
+        // Матрица вида из позиции света (activeLightPos вычисляется в OnUpdateFrame)
+        Matrix4 lightView = Matrix4.LookAt(activeLightPos, Vector3.Zero, Vector3.UnitY);
+        lightSpaceMatrix = lightView * lightProjection; // Комбинированная матрица
+
+        // Настраиваем рендер в текстуру глубины
+        GL.Viewport(0, 0, shadowMapWidth, shadowMapHeight); // Устанавливаем размер viewport для FBO
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, depthMapFBO); // Активируем FBO
+        GL.Clear(ClearBufferMask.DepthBufferBit); // Очищаем ТОЛЬКО буфер глубины
+
+        // Используем шейдер для записи глубины
+        shadowShader.UseShader();
+        GL.UniformMatrix4(shadowLightSpaceMatrixLoc, false, ref lightSpaceMatrix); // Передаем матрицу света
+
+        // --- Рендерим объекты, отбрасывающие тень ---
+
+        // Модель Дома (без вращения, поднята)
+        Matrix4 homeRotation = Matrix4.Identity;
+        Matrix4 homeTranslation = Matrix4.CreateTranslation(0f, 0.5f, 0f);
+        Matrix4 homeModel = homeTranslation * homeRotation; // Используем homeModel для обоих проходов
+        GL.UniformMatrix4(shadowModelLoc, false, ref homeModel); // Передаем модель в shadow shader
+
+        // Рисуем Куб Дома
+        GL.BindVertexArray(homeVAO);
+        GL.DrawElements(PrimitiveType.Triangles, homeIndices.Length, DrawElementsType.UnsignedInt, 0);
+
+        // Рисуем Крышу Дома
+        GL.BindVertexArray(roofVAO);
+        GL.DrawElements(PrimitiveType.Triangles, roofIndexCount,
+            DrawElementsType.UnsignedInt, 0); // Используем DrawArrays для крыши
+
+        // Рисуем Землю
+        Matrix4 groundModelShadow = Matrix4.Identity;
+        GL.UniformMatrix4(shadowModelLoc, false, ref groundModelShadow);
+        GL.BindVertexArray(groundVAO);
+        GL.DrawElements(PrimitiveType.Triangles, groundIndices.Length, DrawElementsType.UnsignedInt, 0);
+
+        // Отвязываем ресурсы FBO
+        GL.BindVertexArray(0);
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0); // Возвращаемся к рендеру в окно
+
+        // --- 2. ОСНОВНОЙ РЕНДЕР СЦЕНЫ ---
+        // Восстанавливаем viewport окна
+        GL.Viewport(0, 0, Size.X, Size.Y);
+        // Очищаем буферы цвета и глубины окна
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
+        // Получаем матрицы камеры
         Matrix4 view = camera.GetViewMatrix();
         Matrix4 projection = camera.GetProjectionMatrix();
 
-        unlitShader.UseShader();
-
-        GL.UniformMatrix4(unlitViewLoc, false, ref view);
-        GL.UniformMatrix4(unlitProjLoc, false, ref projection);
-        GL.BindVertexArray(sphereVAO);
-
-        //Sun
-        if (sunPos.Y >= -1.0f) // Рисуем, если чуть выше или ниже горизонта (чтобы не исчезало резко)
-        {
-            Matrix4 sunModel = Matrix4.CreateScale(2.0f) * Matrix4.CreateTranslation(sunPos); // Сделаем побольше и переместим
-            GL.UniformMatrix4(unlitModelLoc, false, ref sunModel);
-            GL.Uniform3(unlitColorLoc, sunColorDay * 1.5f); // Ярче, чтобы было видно на фоне неба
-            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
-        }
-
-        //Moon
-        if (moonPos.Y >= -1.0f) // Рисуем, если чуть выше или ниже горизонта
-        {
-            Matrix4 moonModel = Matrix4.CreateScale(1.5f) * Matrix4.CreateTranslation(moonPos); // Чуть меньше солнца
-            GL.UniformMatrix4(unlitModelLoc, false, ref moonModel);
-            GL.Uniform3(unlitColorLoc, moonColorNight * 1.5f); // Ярче
-            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
-        }
-
-        GL.BindVertexArray(0);
-
-
-        shaderProgram.UseShader();
-
+        // --- Сначала рендерим ОБЪЕКТЫ С ТЕНЯМИ (Дом и Земля) ---
+        shaderProgram.UseShader(); // Активируем основной шейдер с освещением и тенями
+                                   // Устанавливаем матрицы камеры
         GL.UniformMatrix4(viewLocation, false, ref view);
         GL.UniformMatrix4(projectionLocation, false, ref projection);
-
+        // Устанавливаем параметры освещения (вычислены в OnUpdateFrame)
         GL.Uniform3(lightDirLoc, ref currentLightDir);
         GL.Uniform3(lightColorLoc, ref currentLightColor);
         GL.Uniform3(ambientColorLoc, ref currentAmbientColor);
         GL.Uniform3(viewPosLoc, camera.Position);
+        // Устанавливаем матрицу света и КАРТУ ТЕНЕЙ
+        GL.UniformMatrix4(lightSpaceMatrixLoc, false, ref lightSpaceMatrix);
+        GL.ActiveTexture(TextureUnit.Texture1); // Активируем ТЕКСТУРНЫЙ ЮНИТ 1
+        GL.BindTexture(TextureTarget.Texture2D, depthMapTexture); // Биндим КАРТУ ТЕНЕЙ к юниту 1
+                                                                  // Sampler 'shadowMap' в шейдере должен использовать юнит 1 (установлено в OnLoad)
 
-        yRot += (float)args.Time * 0.1f;
+        // --- Рендерим КУБ Дома (по граням с разными текстурами) ---
+        GL.ActiveTexture(TextureUnit.Texture0); // Активируем ТЕКСТУРНЫЙ ЮНИТ 0 для основных текстур
+                                                // Sampler 'texture0' в шейдере должен использовать юнит 0 (установлено в OnLoad)
+        GL.UniformMatrix4(modelLocation, false, ref homeModel); // Устанавливаем модель дома
+        GL.BindVertexArray(homeVAO); // Биндим VAO куба
+        DrawCubeFace(0, 6, homeFaceTextureIDs[0]);   // Front
+        DrawCubeFace(6, 6, homeFaceTextureIDs[1]);   // Back
+        DrawCubeFace(12, 6, homeFaceTextureIDs[2]);  // Left
+        DrawCubeFace(18, 6, homeFaceTextureIDs[3]);  // Right
+        DrawCubeFace(24, 6, homeFaceTextureIDs[4]);  // Top
+        DrawCubeFace(30, 6, homeFaceTextureIDs[5]);  // Bottom
 
-        Matrix4 homeRotation = Matrix4.CreateRotationY(yRot);
-        Matrix4 homeTranslation = Matrix4.CreateTranslation(0f, 0.5f, 0f);
-        Matrix4 homeModel = homeRotation * homeTranslation;
-        GL.UniformMatrix4(modelLocation, false, ref homeModel);
+        // --- Рендерим КРЫШУ Дома (по граням с разными текстурами) ---
+        // Модель та же, шейдер тот же, юнит 0 все еще активен
+        GL.BindVertexArray(roofVAO); // Биндим VAO крыши
+        DrawRoofFaceByIndex(0, 6, homeFaceTextureIDs[6]);  // Front Slope (6 индексов)
+        DrawRoofFaceByIndex(6, 6, homeFaceTextureIDs[7]);  // Back Slope
+        DrawRoofFaceByIndex(12, 3, homeFaceTextureIDs[8]); // Left Gable
+        DrawRoofFaceByIndex(15, 3, homeFaceTextureIDs[9]);   // Roof Right
 
-        GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, homeTextureID);
-        GL.BindVertexArray(homeVAO);
-        GL.DrawElements(PrimitiveType.Triangles, homeIndices.Length, DrawElementsType.UnsignedInt, 0);
-
-        GL.BindVertexArray(0);
-
-
+        // --- Рендерим ЗЕМЛЮ ---
+        // Шейдер тот же, освещение то же, юнит 0 все еще активен, юнит 1 с тенью
+        GL.BindTexture(TextureTarget.Texture2D, groundTextureID); // Биндим текстуру земли к юниту 0
         Matrix4 groundModel = Matrix4.Identity;
         GL.UniformMatrix4(modelLocation, false, ref groundModel);
+        GL.BindVertexArray(groundVAO); // Биндим VAO земли
+        GL.DrawElements(PrimitiveType.Triangles, groundIndices.Length, DrawElementsType.UnsignedInt, 0);
+        GL.BindVertexArray(0); // Отвязываем VAO
 
-        GL.BindTexture(TextureTarget.Texture2D, groundTextureID);
-        GL.BindVertexArray(groundVAO);
+        // --- Теперь рендерим СОЛНЦЕ и ЛУНУ (без теней) ---
+        unlitShader.UseShader(); // Активируем UNLIT шейдер
+        GL.UniformMatrix4(unlitViewLoc, false, ref view);
+        GL.UniformMatrix4(unlitProjLoc, false, ref projection);
+        GL.BindVertexArray(sphereVAO);
+        // Sun
+        if (sunPos.Y >= -1.0f)
+        {
+            Matrix4 sunModel = Matrix4.CreateScale(2.0f) * Matrix4.CreateTranslation(sunPos);
+            GL.UniformMatrix4(unlitModelLoc, false, ref sunModel);
+            GL.Uniform3(unlitColorLoc, sunColorDay * 1.5f); // Можно настроить яркость
+            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
+        }
+        // Moon
+        if (moonPos.Y >= -1.0f)
+        {
+            Matrix4 moonModel = Matrix4.CreateScale(1.5f) * Matrix4.CreateTranslation(moonPos);
+            GL.UniformMatrix4(unlitModelLoc, false, ref moonModel);
+            GL.Uniform3(unlitColorLoc, moonColorNight * 1.5f); // Можно настроить яркость
+            GL.DrawElements(PrimitiveType.Triangles, sphereIndexCount, DrawElementsType.UnsignedInt, 0);
+        }
+        GL.BindVertexArray(0); // Отвязываем VAO сферы
 
-        GL.DrawElements(PrimitiveType.Triangles,
-            groundIndices.Length,
-            DrawElementsType.UnsignedInt, 0);
-
-        GL.BindVertexArray(0);
-
-        //Skybox
-        GL.DepthFunc(DepthFunction.Lequal);
-        skyboxShaderProgram.UseShader();
-
-        Matrix4 skyboxView = new Matrix4(new Matrix3(view));
-        GL.UniformMatrix4(skyboxViewLocation, false, ref skyboxView);
+        // --- Рендерим СКАЙБОКС (в самом конце) ---
+        GL.DepthFunc(DepthFunction.Lequal); // Устанавливаем тест глубины для скайбокса
+        skyboxShaderProgram.UseShader(); // Активируем шейдер скайбокса
+        Matrix4 skyboxViewMatrix = view.ClearTranslation(); // Матрица вида без смещения
+        GL.UniformMatrix4(skyboxViewLocation, false, ref skyboxViewMatrix);
         GL.UniformMatrix4(skyboxProjectionLocation, false, ref projection);
-        GL.Uniform1(skyboxBrightnessFactorLoc, sunAltitudeFactor);
+        GL.Uniform1(skyboxBrightnessFactorLoc, sunAltitudeFactor); // Передаем яркость
+        GL.BindVertexArray(skyboxVAO); // Биндим VAO скайбокса
+        GL.ActiveTexture(TextureUnit.Texture0); // Активируем юнит 0
+        GL.BindTexture(TextureTarget.TextureCubeMap, skyboxTextureID); // Биндим кубмап к юниту 0
+                                                                       // Sampler 'skybox' должен использовать юнит 0 (установлено в OnLoad)
+        GL.DrawArrays(PrimitiveType.Triangles, 0, 36); // Рисуем скайбокс
+        GL.BindVertexArray(0); // Отвязываем VAO
+        GL.DepthFunc(DepthFunction.Less); // Возвращаем стандартный тест глубины
 
-        GL.BindVertexArray(skyboxVAO);
-        GL.ActiveTexture(TextureUnit.Texture0);
-
-        GL.BindTexture(TextureTarget.TextureCubeMap, skyboxTextureID);
-
-        GL.DrawArrays(PrimitiveType.Triangles, 0, 36);
-
-        GL.BindVertexArray(0);
-        GL.DepthFunc(DepthFunction.Less);
-
-        Context.SwapBuffers();
-
+        Context.SwapBuffers(); // Показываем отрисованный кадр
     }
 
 
@@ -756,7 +1118,6 @@ internal class Game: GameWindow
         transitionMixFactor = transitionMixFactor * transitionMixFactor
             * (3.0f - 2.0f * transitionMixFactor);
 
-        Vector3 activeLightPos;
         float dayIntensity;
 
         if (sunPos.Y >= 0) // День
