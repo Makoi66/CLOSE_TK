@@ -23,7 +23,7 @@ float CalculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     if(currentDepth > 1.0)
         return 1.0;
 
-    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.0005);
+    float bias = max(0.0015 * (1.0 - dot(normal, lightDir)), 0.00015);
     float shadow = 0.0;
     int pcfSamples = 4;
     float texelSize = 1.0 / textureSize(shadowMap, 0).x;

@@ -12,6 +12,7 @@ namespace CLOSE_TK
     class Camera
     {
         private float SPEED = 8f;
+        private float boost = 1f;
         private int SCREENWIDTH;
         private int SCREENHEIGHT;
         private float SENSITIVITY = 100f;
@@ -84,21 +85,22 @@ namespace CLOSE_TK
             currentPos = new Vector2(mouse.X, mouse.Y);
 
             float time = (float)e.Time;
+            if (input.IsKeyDown(Keys.LeftControl)) boost = 2.5f;
             if (input.IsKeyDown(Keys.W))
             {
-                Position += front * SPEED * time;
+                Position += front * SPEED * time * boost;
             }
             if (input.IsKeyDown(Keys.A))
             {
-                Position -= right * SPEED * time;
+                Position -= right * SPEED * time * boost;
             }
             if (input.IsKeyDown(Keys.S))
             {
-                Position -= front * SPEED * time;
+                Position -= front * SPEED * time * boost;
             }
             if (input.IsKeyDown(Keys.D))
             {
-                Position += right * SPEED * time;
+                Position += right * SPEED * time * boost;
             }
             if (input.IsKeyDown(Keys.Space))
             {
@@ -108,6 +110,8 @@ namespace CLOSE_TK
             {
                 Position -= Vector3.UnitY * SPEED * time;
             }
+
+            boost = 1f;
 
             if(Position.Y < 0.2f)
             {
