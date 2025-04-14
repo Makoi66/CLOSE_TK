@@ -56,12 +56,12 @@ internal class Game: GameWindow
 
     // Параметры цикла и освещения
     private float timeOfDay = 0.0f; // 0.0 = восход/полдень, PI = закат/полночь
-    private float cycleSpeed = 0.5f; // Скорость смены дня/ночи (радианы в секунду)
-    private float orbitRadius = 50.0f; // Насколько далеко солнце/луна
-    private Vector3 sunPos, moonPos;   // Текущие позиции
-    private Vector3 currentLightDir;   // Направление НА источник света
-    private Vector3 currentLightColor; // Цвет источника
-    private Vector3 currentAmbientColor; // Цвет фонового освещения
+    private float cycleSpeed = 0.5f; // cкорость смены дня/ночи (радианы в секунду)
+    private float orbitRadius = 50.0f; // yасколько далеко солнце/луна
+    private Vector3 sunPos, moonPos;   // nекущие позиции
+    private Vector3 currentLightDir;   // yаправление НА источник света
+    private Vector3 currentLightColor; // wвет источника
+    private Vector3 currentAmbientColor; // wвет фонового освещения
     private int skyboxBrightnessFactorLoc;
     private float sunAltitudeFactor;
 
